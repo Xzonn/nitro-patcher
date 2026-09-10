@@ -1,0 +1,48 @@
+name: Build and test
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ['22', '24']
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6.0.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck, lint, format, test and build
+        run: pnpm run check
+      - name: Create installable package
+        run: |
+          mkdir -p artifacts
+          pnpm --config.ignore-scripts=true pack --pack-destination artifacts
+      - name: Verify installation, CLI, API and consumer types
+        run: pnpm run test:package artifacts/*.tgz
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nitro-patcher-${{ matrix.os }}-node-${{ matrix.node }}-${{ github.sha }}
+          path: artifacts/*.tgz
+          if-no-files-found: error
+          retention-days: 7

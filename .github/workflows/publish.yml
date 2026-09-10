@@ -1,0 +1,87 @@
+name: Publish stable npm release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6.0.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Validate stable release tag
+        # Read the ref as data. Never interpolate a tag into executable code.
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          const tag = process.env.GITHUB_REF_NAME ?? '';
+          if (!/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(tag)) {
+            throw new Error('Release tag must be stable semver vX.Y.Z with no leading zeroes');
+          }
+          const version = tag.slice(1);
+          if (version.length > 200 || version.split('.').some(part => !Number.isSafeInteger(Number(part)))) {
+            throw new Error('Release version exceeds supported semver bounds');
+          }
+          appendFileSync(process.env.GITHUB_ENV, `RELEASE_VERSION=${version}\n`);
+          NODE
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck, lint, format, test and build
+        run: pnpm run check
+      - name: Set package version from the validated tag
+        run: pnpm version "$RELEASE_VERSION" --no-git-tag-version --allow-same-version
+      - name: Pack the release once
+        run: |
+          mkdir -p artifacts
+          pnpm --config.ignore-scripts=true pack --pack-destination artifacts
+      - name: Smoke-test the exact release tarball
+        run: pnpm run test:package artifacts/*.tgz
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-release
+          path: artifacts/*.tgz
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6.0.9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-release
+          path: artifacts
+      - name: Publish the checked tarball to public latest
+        # Prefer OIDC: configure this repository + publish.yml as the package's
+        # trusted publisher on npmjs.com. NPM_TOKEN is an optional bootstrap
+        # fallback when the package does not yet have a trusted publisher.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/npm-publish.npmrc
+        run: |
+          if [ -n "$NODE_AUTH_TOKEN" ]; then
+            printf '%s\n' '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$NPM_CONFIG_USERCONFIG"
+          else
+            : > "$NPM_CONFIG_USERCONFIG"
+          fi
+          pnpm publish artifacts/*.tgz --no-git-checks --ignore-scripts --access public --tag latest --provenance --registry https://registry.npmjs.org/

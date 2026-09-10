@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "emitDeclarationOnly": true,
+    "declarationMap": false,
+    "outDir": "artifacts/browser-types"
+  },
+  "include": ["src/browser.ts"]
+}

@@ -1,0 +1,6 @@
+allowBuilds:
+  esbuild: true
+
+# Keep the already pinned Node types while this release is within pnpm's age window.
+minimumReleaseAgeExclude:
+  - '@types/node@22.20.2'
