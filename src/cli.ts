@@ -7,11 +7,12 @@ import { patchBuffer, readPatchInfo, type PatchMetadata } from './nitro-patch-he
 
 const help = `nitro-patcher — 原生 Node.js NDS ROM 补丁工具
 
-用法：nitro-patcher [--json] <原始ROM> <补丁ZIP> <输出ROM>
+用法：nitro-patcher [--json] [--dry-run] <原始ROM> <补丁ZIP> [输出ROM]
 
-  --json        输出 JSON 状态和 MD5
-  -h, --help    显示帮助
-  -v, --version 显示版本`;
+  --json         输出 JSON 状态和 MD5
+  --dry-run      完整执行补丁流程，但不写入输出 ROM
+  -h, --help     显示帮助
+  -v, --version  显示版本`;
 
 const sameFile = async (input: string, output: string): Promise<boolean> => {
   if (resolve(input) === resolve(output)) return true;
@@ -65,6 +66,7 @@ const main = async (): Promise<void> => {
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
       json: { type: 'boolean' },
+      'dry-run': { type: 'boolean' },
     },
   });
   if (values.help) {
@@ -85,25 +87,44 @@ const main = async (): Promise<void> => {
     console.log(metadata.version);
     return;
   }
-  if (positionals.length !== 3) throw new Error(help);
+  const dryRun = values['dry-run'] ?? false;
+  if (
+    (!dryRun && positionals.length !== 3) ||
+    (dryRun && (positionals.length < 2 || positionals.length > 3))
+  )
+    throw new Error(help);
   const [original, patch, output] = positionals;
-  if ((await sameFile(original, output)) || (await sameFile(patch, output)))
-    throw new Error('输出路径不能覆盖原始 ROM 或补丁包。');
+  if (!dryRun) {
+    if (!output) throw new Error(help);
+    if ((await sameFile(original, output)) || (await sameFile(patch, output)))
+      throw new Error('输出路径不能覆盖原始 ROM 或补丁包。');
+  }
   const [originalBytes, patchBytes] = await Promise.all([readFile(original), readFile(patch)]);
   const info = readPatchInfo(patchBytes);
   const result = patchBuffer(originalBytes, patchBytes);
-  const destination = join(await realpath(dirname(resolve(output))), basename(output));
-  const temporary = await mkdtemp(join(dirname(destination), '.nitro-patcher-'));
-  try {
-    const file = join(temporary, 'output.nds');
-    await writeFile(file, result.buffer);
-    await rename(file, destination);
-  } finally {
-    await rm(temporary, { recursive: true, force: true });
+  if (!dryRun) {
+    if (!output) throw new Error(help);
+    const destination = join(await realpath(dirname(resolve(output))), basename(output));
+    const temporary = await mkdtemp(join(dirname(destination), '.nitro-patcher-'));
+    try {
+      const file = join(temporary, 'output.nds');
+      await writeFile(file, result.buffer);
+      await rename(file, destination);
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
   }
   const { returnValue, inputMd5, outputMd5 } = result;
   if (values.json) {
-    console.log(JSON.stringify({ returnValue, inputMd5, outputMd5, ...info }));
+    console.log(
+      JSON.stringify({
+        returnValue,
+        inputMd5,
+        outputMd5,
+        ...info,
+        ...(dryRun && { dryRun: true }),
+      }),
+    );
     return;
   }
 
@@ -124,6 +145,7 @@ const main = async (): Promise<void> => {
         : content;
     sections.push(`补丁说明：\n\n${rendered.trimEnd()}`);
   }
+  if (dryRun) sections.push('试运行完成，未写入输出 ROM。');
   sections.push(`${returnValue}\n\n原始 ROM 的 MD5：${inputMd5}\n生成 ROM 的 MD5：${outputMd5}`);
   console.log(sections.join('\n\n'));
 };

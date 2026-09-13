@@ -88,6 +88,12 @@ try {
   );
   assert.match(cliOutput, /Package Patch/);
   assert.match(cliOutput, /Installed package instructions/);
+  const dryRunOutput = callPnpm(
+    ['exec', 'nitro-patcher', '--dry-run', 'source.nds', 'patch.zip', 'dry-run-output.nds'],
+    temporary,
+  );
+  assert.match(dryRunOutput, /未写入输出 ROM/);
+  await assert.rejects(access(join(temporary, 'dry-run-output.nds')));
 
   // This file is executed and compiled outside the repository. Its package
   // imports can resolve only the installed tarball, never workspace sources.
