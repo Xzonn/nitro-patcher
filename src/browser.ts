@@ -1,6 +1,13 @@
 import { NDSFile } from './nitro/nds-file';
 import { patchBuffer as patch, readPatchMetadata as readMetadata } from './nitro-patch-helper';
-import type { PatchMetadata } from './nitro-patch-helper';
+
+export interface PatchMetadata {
+  author: string;
+  name: string;
+  homepage: string;
+  version: string;
+  isBeta: boolean;
+}
 
 export interface BrowserPatchOptions {
   maxOutputSize?: number;
@@ -63,6 +70,5 @@ export const readPatchMetadata = (
   options: BrowserPatchOptions = {},
 ): PatchMetadata | null => readMetadata(archive, options);
 
-export type { PatchMetadata } from './nitro-patch-helper';
 export const PatchHelper = Object.freeze({ patchBuffer, readPatchMetadata });
 export const NitroHelper = Object.freeze({ inspectRom });

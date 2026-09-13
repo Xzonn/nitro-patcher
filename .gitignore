@@ -4,3 +4,4 @@ artifacts/
 coverage/
 *.tgz
 .DS_Store
+/wiki/

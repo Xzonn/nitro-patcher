@@ -10,6 +10,14 @@ const metadata = JSON.parse(await readFile('package.json', 'utf8')) as {
 assert.ok(metadata.exports['./browser'], 'The package must expose a browser entry');
 const source = await readFile('dist/browser.js', 'utf8');
 assert.doesNotMatch(source, /(?:from|import\()\s*['"]node:/);
+const declarations = await readFile('dist/browser.d.ts', 'utf8');
+for (const match of declarations.matchAll(/(?:from\s+|import\()\s*['"](\.[^'"]+)['"]/g)) {
+  assert.match(
+    match[1]!,
+    /\.(?:c|m)?js$/,
+    `Browser declaration has an extensionless relative import: ${match[1]}`,
+  );
+}
 const compiled = await transform(source, {
   format: 'iife',
   globalName: 'NitroBrowser',

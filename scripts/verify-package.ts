@@ -16,16 +16,23 @@ if (process.argv.length > 3) {
 }
 
 const temporary = await mkdtemp(join(tmpdir(), 'nitro-patcher-package-'));
-const runNode = (args: string[], cwd: string): string =>
-  execFileSync(process.execPath, args, {
+const runCommand = (command: string, args: string[], cwd: string): string =>
+  execFileSync(command, args, {
     cwd,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
   });
+const runNode = (args: string[], cwd: string): string => runCommand(process.execPath, args, cwd);
+const callPnpm = (args: string[], cwd: string): string => {
+  // pnpm/action-setup exposes a JavaScript entrypoint, while a local Windows
+  // installation can expose a standalone executable through npm_execpath.
+  const pnpmArgs = ['--dir', cwd, ...args];
+  return pnpmCli.toLowerCase().endsWith('.exe')
+    ? runCommand(pnpmCli, pnpmArgs, cwd)
+    : runNode([pnpmCli, ...pnpmArgs], cwd);
+};
 const runPnpm = (args: string[], cwd: string): void => {
-  // Calling pnpm's JavaScript entrypoint avoids shell/cmd quoting and works on
-  // Windows, macOS and Linux, including workspace paths containing spaces.
-  process.stdout.write(runNode([pnpmCli, '--dir', cwd, ...args], cwd));
+  process.stdout.write(callPnpm(args, cwd));
 };
 
 try {
@@ -57,7 +64,7 @@ try {
       process.platform === 'win32' ? 'nitro-patcher.cmd' : 'nitro-patcher',
     ),
   );
-  const help = runNode([pnpmCli, '--dir', temporary, 'exec', 'nitro-patcher', '--help'], temporary);
+  const help = callPnpm(['exec', 'nitro-patcher', '--help'], temporary);
   assert.match(help, /nitro-patcher/i, 'installed CLI must print its usage');
   await writeFile(join(temporary, 'source.nds'), createRom({ hello: 'before package patch\n' }));
   await writeFile(
