@@ -31,7 +31,58 @@ export interface PatchOptions {
   maxEntries?: number;
 }
 
+export interface PatchMetadata {
+  author: string;
+  name: string;
+  homepage: string;
+  version: string;
+  isBeta: boolean;
+}
+
 const md5 = (data: Uint8Array): string => hashDigest('md5', data).toString('hex');
+const invalidMetadata = (message: string): null => {
+  console.warn(`忽略 metadata.json：${message}`);
+  return null;
+};
+
+/** Read and validate metadata.json from a NitroPatcher ZIP package. */
+export const readPatchMetadata = (
+  patch: Uint8Array,
+  options: PatchOptions = {},
+): PatchMetadata | null => {
+  const file = readZip(patch, options).get('metadata.json');
+  if (!file) return null;
+
+  let metadata: unknown;
+  try {
+    metadata = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(file));
+  } catch (error) {
+    return invalidMetadata(
+      `格式错误，可能是因为补丁包已损坏：${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
+    return invalidMetadata('根节点必须是对象。');
+
+  const value = metadata as Record<string, unknown>;
+  for (const field of ['author', 'name', 'homepage', 'version'] as const)
+    if (typeof value[field] !== 'string') return invalidMetadata(`${field} 必须是字符串。`);
+  if (typeof value.isBeta !== 'boolean') return invalidMetadata('isBeta 必须是布尔值。');
+
+  return {
+    author: value.author as string,
+    name: value.name as string,
+    homepage: value.homepage as string,
+    version: value.version as string,
+    isBeta: value.isBeta,
+  };
+};
+
+/** Read metadata.json from a NitroPatcher ZIP package on disk. */
+export const readPatchMetadataFile = async (
+  patchPath: string,
+  options: PatchOptions = {},
+): Promise<PatchMetadata | null> => readPatchMetadata(await readFile(patchPath), options);
 
 /** Apply an existing NitroPatcher ZIP package entirely in memory. */
 export const patchBuffer = (
@@ -90,6 +141,11 @@ export const patchIt = async (
 };
 
 /** Namespaced counterpart of the original C# helper, sharing the same typed functions. */
-export const PatchHelper = Object.freeze({ patchBuffer, patchIt });
+export const PatchHelper = Object.freeze({
+  patchBuffer,
+  patchIt,
+  readPatchMetadata,
+  readPatchMetadataFile,
+});
 export { decodeXdelta } from './patch/xdelta';
 export type { XdeltaOptions } from './patch/xdelta';

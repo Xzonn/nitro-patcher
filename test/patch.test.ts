@@ -3,6 +3,41 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createRom, makeZip } from './fixtures';
 
+test('reads and validates patch metadata', async () => {
+  const { readPatchMetadata } = await import('../src/nitro-patch-helper');
+  const expected = {
+    author: 'Example Team',
+    name: 'Example Translation',
+    homepage: 'https://example.com/patch',
+    version: '1.2.3',
+    isBeta: true,
+  };
+
+  assert.deepEqual(
+    readPatchMetadata(makeZip({ 'MeTaDaTa.JsOn': JSON.stringify(expected) })),
+    expected,
+  );
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...arguments_) => warnings.push(arguments_);
+  try {
+    assert.equal(readPatchMetadata(makeZip({ 'md5.txt': '0'.repeat(32) })), null);
+    assert.equal(warnings.length, 0);
+    assert.equal(readPatchMetadata(makeZip({ 'metadata.json': '{' })), null);
+    assert.equal(
+      readPatchMetadata(
+        makeZip({ 'metadata.json': JSON.stringify({ ...expected, isBeta: 'yes' }) }),
+      ),
+      null,
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warnings.length, 2);
+  assert.match(String(warnings[0]?.[0]), /metadata\.json/);
+  assert.match(String(warnings[1]?.[0]), /isBeta/);
+});
+
 test('patch helper replaces case-insensitive paths, ignores extra files and returns original/output MD5', async () => {
   const { patchBuffer } = await import('../src/nitro-patch-helper');
   const { NDSFile } = await import('../src/nitro-helper');

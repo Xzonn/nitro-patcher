@@ -1,5 +1,6 @@
 import { NDSFile } from './nitro/nds-file';
-import { patchBuffer as patch } from './nitro-patch-helper';
+import { patchBuffer as patch, readPatchMetadata as readMetadata } from './nitro-patch-helper';
+import type { PatchMetadata } from './nitro-patch-helper';
 
 export interface BrowserPatchOptions {
   maxOutputSize?: number;
@@ -56,5 +57,12 @@ export const patchBuffer = (
     outputMd5: result.outputMd5,
   };
 };
-export const PatchHelper = Object.freeze({ patchBuffer });
+/** Read and validate metadata.json from a patch package entirely in memory. */
+export const readPatchMetadata = (
+  archive: Uint8Array,
+  options: BrowserPatchOptions = {},
+): PatchMetadata | null => readMetadata(archive, options);
+
+export type { PatchMetadata } from './nitro-patch-helper';
+export const PatchHelper = Object.freeze({ patchBuffer, readPatchMetadata });
 export const NitroHelper = Object.freeze({ inspectRom });

@@ -62,14 +62,23 @@ try {
   await writeFile(join(temporary, 'source.nds'), createRom({ hello: 'before package patch\n' }));
   await writeFile(
     join(temporary, 'patch.zip'),
-    makeZip({ 'data/hello.txt': 'after package patch\n' }),
+    makeZip({
+      'data/hello.txt': 'after package patch\n',
+      'metadata.json': JSON.stringify({
+        author: 'Example Team',
+        name: 'Package Patch',
+        homepage: 'https://example.com',
+        version: '1.0.0',
+        isBeta: false,
+      }),
+    }),
   );
 
   // This file is executed and compiled outside the repository. Its package
   // imports can resolve only the installed tarball, never workspace sources.
   const consumer = `import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { NDSFile, PatchHelper, patchBuffer, patchIt } from 'nitro-patcher';
+import { NDSFile, PatchHelper, patchBuffer, patchIt, readPatchMetadata, readPatchMetadataFile } from 'nitro-patcher';
 import { NDSFile as HelperNDSFile } from 'nitro-patcher/nitro-helper';
 import { PatchHelper as HelperPatchHelper } from 'nitro-patcher/nitro-patch-helper';
 
@@ -77,6 +86,10 @@ assert.equal(NDSFile, HelperNDSFile);
 assert.equal(PatchHelper, HelperPatchHelper);
 const source = readFileSync(new URL('./source.nds', import.meta.url));
 const archive = readFileSync(new URL('./patch.zip', import.meta.url));
+const metadata = readPatchMetadata(archive);
+assert.equal(metadata?.name, 'Package Patch');
+assert.equal((await readPatchMetadataFile('./patch.zip'))?.isBeta, false);
+assert.deepEqual(PatchHelper.readPatchMetadata(archive), metadata);
 const original = new NDSFile(source);
 assert.equal(original.getFile('data/hello.txt').toString(), 'before package patch\\n');
 const result = patchBuffer(source, archive);
@@ -135,13 +148,14 @@ console.log('Installed package CLI, root/subpath API, patch roundtrip and declar
   await writeFile(
     join(temporary, 'browser-consumer.ts'),
     `
-import { patchBuffer, inspectRom, PatchHelper, NitroHelper } from 'nitro-patcher/browser';
+import { patchBuffer, inspectRom, readPatchMetadata, PatchHelper, NitroHelper } from 'nitro-patcher/browser';
 export const check = (rom: Uint8Array, patch: Uint8Array): Blob => {
   const result = patchBuffer(rom, patch);
   const bytes: Uint8Array<ArrayBuffer> = result.buffer;
   const state: 'SUCCESS' | 'MD5_MISMATCH' = result.returnValue;
   const count: number = inspectRom(rom).fileCount;
   const code: string = NitroHelper.inspectRom(rom).gameCode;
+  const patchName: string | undefined = readPatchMetadata(patch)?.name;
   PatchHelper.patchBuffer(rom, patch, { maxOutputSize: 1024 });
   // @ts-expect-error Browser bytes have no Node Buffer methods.
   result.buffer.readUInt32LE(0);
@@ -149,7 +163,7 @@ export const check = (rom: Uint8Array, patch: Uint8Array): Blob => {
   patchBuffer('rom.nds', patch);
   // @ts-expect-error An unknown result state must be rejected.
   const invalid: typeof state = 'OTHER';
-  void invalid; void count; void code;
+  void invalid; void count; void code; void patchName;
   return new Blob([bytes]);
 };
 `,
