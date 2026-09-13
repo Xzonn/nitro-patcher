@@ -7,10 +7,15 @@ import { patchBuffer, readPatchInfo, type PatchMetadata } from './nitro-patch-he
 
 const help = `nitro-patcher — 原生 Node.js NDS ROM 补丁工具
 
-用法：nitro-patcher [--json] [--dry-run] <原始ROM> <补丁ZIP> [输出ROM]
+用法：
+  nitro-patcher [--json] [--dry-run] <原始ROM> <补丁ZIP> [输出ROM]
+  nitro-patcher [--json] [--dry-run] --input <原始ROM> --patch <补丁ZIP> [--output <输出ROM>]
 
   --json         输出 JSON 状态和 MD5
   --dry-run      完整执行补丁流程，但不写入输出 ROM
+  -i, --input    原始 ROM 路径
+  -p, --patch    补丁 ZIP 路径
+  -o, --output   输出 ROM 路径；试运行时可省略
   -h, --help     显示帮助
   -v, --version  显示版本`;
 
@@ -67,6 +72,9 @@ const main = async (): Promise<void> => {
       version: { type: 'boolean', short: 'v' },
       json: { type: 'boolean' },
       'dry-run': { type: 'boolean' },
+      input: { type: 'string', short: 'i' },
+      patch: { type: 'string', short: 'p' },
+      output: { type: 'string', short: 'o' },
     },
   });
   if (values.help) {
@@ -88,12 +96,20 @@ const main = async (): Promise<void> => {
     return;
   }
   const dryRun = values['dry-run'] ?? false;
+  const usesNamedPaths =
+    values.input !== undefined || values.patch !== undefined || values.output !== undefined;
+  if (usesNamedPaths && positionals.length > 0) throw new Error(help);
   if (
-    (!dryRun && positionals.length !== 3) ||
-    (dryRun && (positionals.length < 2 || positionals.length > 3))
+    (usesNamedPaths && (!values.input || !values.patch || (!dryRun && !values.output))) ||
+    (!usesNamedPaths &&
+      ((!dryRun && positionals.length !== 3) ||
+        (dryRun && (positionals.length < 2 || positionals.length > 3))))
   )
     throw new Error(help);
-  const [original, patch, output] = positionals;
+  const [original, patch, output] = usesNamedPaths
+    ? [values.input, values.patch, values.output]
+    : positionals;
+  if (!original || !patch) throw new Error(help);
   if (!dryRun) {
     if (!output) throw new Error(help);
     if ((await sameFile(original, output)) || (await sameFile(patch, output)))

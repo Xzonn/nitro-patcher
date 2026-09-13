@@ -89,7 +89,17 @@ try {
   assert.match(cliOutput, /Package Patch/);
   assert.match(cliOutput, /Installed package instructions/);
   const dryRunOutput = callPnpm(
-    ['exec', 'nitro-patcher', '--dry-run', 'source.nds', 'patch.zip', 'dry-run-output.nds'],
+    [
+      'exec',
+      'nitro-patcher',
+      '--dry-run',
+      '-i',
+      'source.nds',
+      '-p',
+      'patch.zip',
+      '-o',
+      'dry-run-output.nds',
+    ],
     temporary,
   );
   assert.match(dryRunOutput, /未写入输出 ROM/);

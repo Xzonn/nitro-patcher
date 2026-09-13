@@ -19,6 +19,9 @@ test('CLI help/version work without a ROM; invalid arguments fail', () => {
   assert.equal(help.status, 0);
   assert.match(help.stdout, /nitro-patcher/);
   assert.match(help.stdout, /--dry-run/);
+  assert.match(help.stdout, /-i, --input/);
+  assert.match(help.stdout, /-p, --patch/);
+  assert.match(help.stdout, /-o, --output/);
   assert.equal(run(['--version']).status, 0);
   assert.equal(run([]).status, 1);
   assert.equal(run(['--bad-option']).status, 1);
@@ -32,6 +35,7 @@ test('CLI creates a patched ROM, displays package information and keeps JSON mac
       patch = join(folder, 'patch.zip'),
       output = join(folder, 'output.nds'),
       humanOutput = join(folder, 'human-output.nds'),
+      namedOutput = join(folder, 'named-output.nds'),
       dryRunOutput = join(folder, 'dry-run-output.nds');
     await writeFile(original, createRom());
     await writeFile(
@@ -78,14 +82,29 @@ test('CLI creates a patched ROM, displays package information and keeps JSON mac
     assert.match(human.stdout, /Use carefully/);
     assert.equal(human.stdout.includes('\u001b'), false);
     assert.equal(human.stdout.includes('\u0007'), false);
+    const named = run(['--json', '--input', original, '--patch', patch, '--output', namedOutput]);
+    assert.equal(named.status, 0, named.stderr);
+    assert.equal(
+      new NDSFile(await readFile(namedOutput)).getFile('data/hello.txt').toString(),
+      'CLI works',
+    );
     await writeFile(dryRunOutput, 'unchanged');
-    const dryRun = run(['--dry-run', '--json', original, patch, dryRunOutput]);
+    const dryRun = run([
+      '--dry-run',
+      '--json',
+      '--input',
+      original,
+      '--patch',
+      patch,
+      '--output',
+      dryRunOutput,
+    ]);
     assert.equal(dryRun.status, 0, dryRun.stderr);
     const dryRunResult = JSON.parse(dryRun.stdout) as { dryRun?: boolean; outputMd5?: string };
     assert.equal(dryRunResult.dryRun, true);
     assert.equal(dryRunResult.outputMd5, metadata.outputMd5);
     assert.equal(await readFile(dryRunOutput, 'utf8'), 'unchanged');
-    const dryRunWithoutOutput = run(['--dry-run', original, patch]);
+    const dryRunWithoutOutput = run(['--dry-run', '-i', original, '-p', patch]);
     assert.equal(dryRunWithoutOutput.status, 0, dryRunWithoutOutput.stderr);
     assert.match(dryRunWithoutOutput.stdout, /未写入输出 ROM/);
     assert.equal(
@@ -102,6 +121,8 @@ test('CLI creates a patched ROM, displays package information and keeps JSON mac
     );
     assert.equal(run([original, patch, original]).status, 1);
     assert.equal(run(['--dry-run', original]).status, 1);
+    assert.equal(run(['--input', original, '--patch', patch]).status, 1);
+    assert.equal(run(['--input', original, patch, output]).status, 1);
   } finally {
     await rm(folder, { recursive: true, force: true });
   }
