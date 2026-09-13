@@ -1,5 +1,10 @@
 import { NDSFile } from './nitro/nds-file';
-import { patchBuffer as patch, readPatchMetadata as readMetadata } from './nitro-patch-helper';
+import {
+  patchBuffer as patch,
+  readPatchInfo as readInfo,
+  readPatchMetadata as readMetadata,
+  readPatchReadme as readReadme,
+} from './nitro-patch-helper';
 
 export interface PatchMetadata {
   id?: string;
@@ -8,6 +13,14 @@ export interface PatchMetadata {
   homepage?: string;
   version?: string;
   isBeta?: boolean;
+}
+export interface PatchReadme {
+  format: 'markdown' | 'plaintext';
+  content: string;
+}
+export interface PatchInfo {
+  metadata: PatchMetadata | null;
+  readme: PatchReadme | null;
 }
 
 export interface BrowserPatchOptions {
@@ -70,6 +83,19 @@ export const readPatchMetadata = (
   archive: Uint8Array,
   options: BrowserPatchOptions = {},
 ): PatchMetadata | null => readMetadata(archive, options);
+/** Read a root README.md or README.txt from a patch package entirely in memory. */
+export const readPatchReadme = (
+  archive: Uint8Array,
+  options: BrowserPatchOptions = {},
+): PatchReadme | null => readReadme(archive, options);
+/** Read metadata and README content while parsing the patch package only once. */
+export const readPatchInfo = (archive: Uint8Array, options: BrowserPatchOptions = {}): PatchInfo =>
+  readInfo(archive, options);
 
-export const PatchHelper = Object.freeze({ patchBuffer, readPatchMetadata });
+export const PatchHelper = Object.freeze({
+  patchBuffer,
+  readPatchInfo,
+  readPatchMetadata,
+  readPatchReadme,
+});
 export const NitroHelper = Object.freeze({ inspectRom });

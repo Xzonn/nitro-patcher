@@ -84,5 +84,8 @@
     "#browser-hashes": "@noble/hashes/legacy.js",
     "#browser-hmac": "@noble/hashes/hmac.js",
     "#browser-aes": "@noble/ciphers/aes.js"
+  },
+  "dependencies": {
+    "markdansi": "0.3.3"
   }
 }

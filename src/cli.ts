@@ -2,7 +2,8 @@
 import { mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { patchIt } from './nitro-patch-helper';
+import { render } from 'markdansi';
+import { patchBuffer, readPatchInfo, type PatchMetadata } from './nitro-patch-helper';
 
 const help = `nitro-patcher — 原生 Node.js NDS ROM 补丁工具
 
@@ -22,6 +23,39 @@ const sameFile = async (input: string, output: string): Promise<boolean> => {
     if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     return false;
   }
+};
+
+const safeTerminalText = (value: string): string => {
+  const characters: string[] = [];
+  for (const character of value.replaceAll('\r\n', '\n').replaceAll('\r', '\n')) {
+    const code = character.codePointAt(0)!;
+    if (
+      (code < 0x20 && code !== 0x09 && code !== 0x0a) ||
+      (code >= 0x7f && code <= 0x9f) ||
+      (code >= 0x202a && code <= 0x202e) ||
+      (code >= 0x2066 && code <= 0x2069)
+    )
+      continue;
+    characters.push(character);
+  }
+  return characters.join('');
+};
+
+const formatMetadata = (metadata: PatchMetadata): string => {
+  const labels = {
+    author: '作者',
+    name: '名称',
+    homepage: '主页',
+    version: '版本',
+  } as const;
+  const lines: string[] = [];
+  for (const field of ['author', 'name', 'homepage', 'version'] as const) {
+    const value = metadata[field];
+    if (value === undefined) continue;
+    const suffix = field === 'version' && metadata.isBeta ? '（测试版）' : '';
+    lines.push(`- ${labels[field]}：${safeTerminalText(value).replaceAll('\n', ' ')}${suffix}`);
+  }
+  return lines.join('\n');
 };
 
 const main = async (): Promise<void> => {
@@ -55,7 +89,9 @@ const main = async (): Promise<void> => {
   const [original, patch, output] = positionals;
   if ((await sameFile(original, output)) || (await sameFile(patch, output)))
     throw new Error('输出路径不能覆盖原始 ROM 或补丁包。');
-  const result = await patchIt(original, patch);
+  const [originalBytes, patchBytes] = await Promise.all([readFile(original), readFile(patch)]);
+  const info = readPatchInfo(patchBytes);
+  const result = patchBuffer(originalBytes, patchBytes);
   const destination = join(await realpath(dirname(resolve(output))), basename(output));
   const temporary = await mkdtemp(join(dirname(destination), '.nitro-patcher-'));
   try {
@@ -66,8 +102,30 @@ const main = async (): Promise<void> => {
     await rm(temporary, { recursive: true, force: true });
   }
   const { returnValue, inputMd5, outputMd5 } = result;
-  if (values.json) console.log(JSON.stringify({ returnValue, inputMd5, outputMd5 }));
-  else console.log(`${returnValue}\n\n原始 ROM 的 MD5：${inputMd5}\n生成 ROM 的 MD5：${outputMd5}`);
+  if (values.json) {
+    console.log(JSON.stringify({ returnValue, inputMd5, outputMd5, ...info }));
+    return;
+  }
+
+  const sections: string[] = [];
+  if (info.metadata) {
+    const metadata = formatMetadata(info.metadata);
+    if (metadata) sections.push(`补丁元数据：\n\n${metadata}`);
+  }
+  if (info.readme) {
+    const content = safeTerminalText(info.readme.content);
+    const rendered =
+      info.readme.format === 'markdown'
+        ? render(content, {
+            width: process.stdout.columns ?? 80,
+            color: Boolean(process.stdout.isTTY),
+            hyperlinks: false,
+          })
+        : content;
+    sections.push(`补丁说明：\n\n${rendered.trimEnd()}`);
+  }
+  sections.push(`${returnValue}\n\n原始 ROM 的 MD5：${inputMd5}\n生成 ROM 的 MD5：${outputMd5}`);
+  console.log(sections.join('\n\n'));
 };
 
 main().catch((error: unknown) => {

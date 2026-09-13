@@ -23,20 +23,58 @@ test('CLI help/version work without a ROM; invalid arguments fail', () => {
   assert.equal(run(['--bad-option']).status, 1);
 });
 
-test('CLI creates real patched ROM, emits JSON metadata and handles failures without partial output', async () => {
+test('CLI creates a patched ROM, displays package information and keeps JSON machine-readable', async () => {
   const { NDSFile } = await import('../src/nitro-helper');
   const folder = await mkdtemp(join(tmpdir(), 'nitro-cli-'));
   try {
     const original = join(folder, 'original.nds'),
       patch = join(folder, 'patch.zip'),
-      output = join(folder, 'output.nds');
+      output = join(folder, 'output.nds'),
+      humanOutput = join(folder, 'human-output.nds');
     await writeFile(original, createRom());
-    await writeFile(patch, makeZip({ 'data/hello.txt': 'CLI works', 'md5.txt': '0'.repeat(32) }));
+    await writeFile(
+      patch,
+      makeZip({
+        'data/hello.txt': 'CLI works',
+        'md5.txt': '0'.repeat(32),
+        'metadata.json': JSON.stringify({
+          id: 'cli-patch',
+          name: 'CLI Patch',
+          version: '1.0.0',
+          isBeta: true,
+        }),
+        'README.md': '# Instructions\n\nUse **carefully**.\u001b]52;c;unsafe\u0007',
+      }),
+    );
     const result = run(['--json', original, patch, output]);
     assert.equal(result.status, 0, result.stderr);
-    const metadata: unknown = JSON.parse(result.stdout);
-    assert.ok(metadata && typeof metadata === 'object' && 'returnValue' in metadata);
+    const metadata = JSON.parse(result.stdout) as {
+      returnValue: unknown;
+      metadata: unknown;
+      readme: unknown;
+    };
     assert.equal(metadata.returnValue, 'MD5_MISMATCH');
+    assert.deepEqual(metadata.metadata, {
+      id: 'cli-patch',
+      name: 'CLI Patch',
+      version: '1.0.0',
+      isBeta: true,
+    });
+    assert.deepEqual(metadata.readme, {
+      format: 'markdown',
+      content: '# Instructions\n\nUse **carefully**.\u001b]52;c;unsafe\u0007',
+    });
+    const human = run([original, patch, humanOutput]);
+    assert.equal(human.status, 0, human.stderr);
+    assert.match(human.stdout, /补丁元数据/);
+    assert.match(human.stdout, /CLI Patch/);
+    assert.match(human.stdout, /版本：1\.0\.0（测试版）/);
+    assert.doesNotMatch(human.stdout, /ID：|测试版：|cli-patch/);
+    assert.match(human.stdout, /补丁说明：/);
+    assert.match(human.stdout, /Instructions/);
+    assert.match(human.stdout, /Use carefully/);
+    assert.equal(human.stdout.includes('\u001b'), false);
+    assert.equal(human.stdout.includes('\u0007'), false);
     assert.equal(
       new NDSFile(await readFile(output)).getFile('data/hello.txt').toString(),
       'CLI works',

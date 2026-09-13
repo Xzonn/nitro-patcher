@@ -58,6 +58,44 @@ test('reads and validates patch metadata field by field', async () => {
   assert.match(String(warnings[2]?.[0]), /isBeta/);
 });
 
+test('reads a root patch README with Markdown preferred over plain text', async () => {
+  const { readPatchInfo, readPatchReadme } = await import('../src/nitro-patch-helper');
+  const markdown = '# Patch instructions\n\nApply carefully.';
+  const archive = makeZip({
+    'README.txt': 'Plain instructions',
+    'ReadMe.Md': markdown,
+  });
+  assert.deepEqual(readPatchReadme(archive), { format: 'markdown', content: markdown });
+  assert.deepEqual(readPatchInfo(archive), {
+    metadata: null,
+    readme: { format: 'markdown', content: markdown },
+  });
+  assert.deepEqual(readPatchReadme(makeZip({ 'README.txt': 'Plain instructions' })), {
+    format: 'plaintext',
+    content: 'Plain instructions',
+  });
+  assert.equal(readPatchReadme(makeZip({})), null);
+});
+
+test('invalid UTF-8 README is warned about and falls back to README.txt', async () => {
+  const { readPatchReadme } = await import('../src/nitro-patch-helper');
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  console.warn = (...arguments_) => warnings.push(arguments_);
+  try {
+    assert.deepEqual(
+      readPatchReadme(
+        makeZip({ 'README.md': Buffer.from([0xff]), 'README.txt': 'Fallback instructions' }),
+      ),
+      { format: 'plaintext', content: 'Fallback instructions' },
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.equal(warnings.length, 1);
+  assert.match(String(warnings[0]?.[0]), /README\.md/);
+});
+
 test('patch helper replaces case-insensitive paths, ignores extra files and returns original/output MD5', async () => {
   const { patchBuffer } = await import('../src/nitro-patch-helper');
   const { NDSFile } = await import('../src/nitro-helper');
