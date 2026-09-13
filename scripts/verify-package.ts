@@ -72,6 +72,7 @@ try {
     makeZip({
       'data/hello.txt': 'after package patch\n',
       'metadata.json': JSON.stringify({
+        id: 'package-patch',
         author: 'Example Team',
         name: 'Package Patch',
         homepage: 'https://example.com',
@@ -94,6 +95,7 @@ assert.equal(PatchHelper, HelperPatchHelper);
 const source = readFileSync(new URL('./source.nds', import.meta.url));
 const archive = readFileSync(new URL('./patch.zip', import.meta.url));
 const metadata = readPatchMetadata(archive);
+assert.equal(metadata?.id, 'package-patch');
 assert.equal(metadata?.name, 'Package Patch');
 assert.equal((await readPatchMetadataFile('./patch.zip'))?.isBeta, false);
 assert.deepEqual(PatchHelper.readPatchMetadata(archive), metadata);

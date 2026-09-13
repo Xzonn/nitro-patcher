@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createRom, makeZip } from './fixtures';
 
-test('reads and validates patch metadata', async () => {
+test('reads and validates patch metadata field by field', async () => {
   const { readPatchMetadata } = await import('../src/nitro-patch-helper');
   const expected = {
+    id: 'example-patch',
     author: 'Example Team',
     name: 'Example Translation',
     homepage: 'https://example.com/patch',
@@ -24,18 +25,37 @@ test('reads and validates patch metadata', async () => {
     assert.equal(readPatchMetadata(makeZip({ 'md5.txt': '0'.repeat(32) })), null);
     assert.equal(warnings.length, 0);
     assert.equal(readPatchMetadata(makeZip({ 'metadata.json': '{' })), null);
-    assert.equal(
+    assert.deepEqual(
+      readPatchMetadata(
+        makeZip({ 'metadata.json': JSON.stringify({ ...expected, id: undefined }) }),
+      ),
+      {
+        author: expected.author,
+        name: expected.name,
+        homepage: expected.homepage,
+        version: expected.version,
+        isBeta: expected.isBeta,
+      },
+    );
+    assert.deepEqual(
       readPatchMetadata(
         makeZip({ 'metadata.json': JSON.stringify({ ...expected, isBeta: 'yes' }) }),
       ),
-      null,
+      {
+        id: expected.id,
+        author: expected.author,
+        name: expected.name,
+        homepage: expected.homepage,
+        version: expected.version,
+      },
     );
   } finally {
     console.warn = originalWarn;
   }
-  assert.equal(warnings.length, 2);
+  assert.equal(warnings.length, 3);
   assert.match(String(warnings[0]?.[0]), /metadata\.json/);
-  assert.match(String(warnings[1]?.[0]), /isBeta/);
+  assert.match(String(warnings[1]?.[0]), /id/);
+  assert.match(String(warnings[2]?.[0]), /isBeta/);
 });
 
 test('patch helper replaces case-insensitive paths, ignores extra files and returns original/output MD5', async () => {

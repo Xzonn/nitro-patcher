@@ -2,11 +2,12 @@ import { NDSFile } from './nitro/nds-file';
 import { patchBuffer as patch, readPatchMetadata as readMetadata } from './nitro-patch-helper';
 
 export interface PatchMetadata {
-  author: string;
-  name: string;
-  homepage: string;
-  version: string;
-  isBeta: boolean;
+  id?: string;
+  author?: string;
+  name?: string;
+  homepage?: string;
+  version?: string;
+  isBeta?: boolean;
 }
 
 export interface BrowserPatchOptions {

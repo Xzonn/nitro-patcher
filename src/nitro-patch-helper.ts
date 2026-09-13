@@ -32,17 +32,21 @@ export interface PatchOptions {
 }
 
 export interface PatchMetadata {
-  author: string;
-  name: string;
-  homepage: string;
-  version: string;
-  isBeta: boolean;
+  id?: string;
+  author?: string;
+  name?: string;
+  homepage?: string;
+  version?: string;
+  isBeta?: boolean;
 }
 
 const md5 = (data: Uint8Array): string => hashDigest('md5', data).toString('hex');
 const invalidMetadata = (message: string): null => {
   console.warn(`忽略 metadata.json：${message}`);
   return null;
+};
+const invalidMetadataField = (field: keyof PatchMetadata, message: string): void => {
+  console.warn(`忽略 metadata.json 的 ${field}：${message}`);
 };
 
 /** Read and validate metadata.json from a NitroPatcher ZIP package. */
@@ -65,17 +69,15 @@ export const readPatchMetadata = (
     return invalidMetadata('根节点必须是对象。');
 
   const value = metadata as Record<string, unknown>;
-  for (const field of ['author', 'name', 'homepage', 'version'] as const)
-    if (typeof value[field] !== 'string') return invalidMetadata(`${field} 必须是字符串。`);
-  if (typeof value.isBeta !== 'boolean') return invalidMetadata('isBeta 必须是布尔值。');
+  const result: PatchMetadata = {};
+  for (const field of ['id', 'author', 'name', 'homepage', 'version'] as const) {
+    if (typeof value[field] === 'string') result[field] = value[field];
+    else invalidMetadataField(field, '必须是字符串。');
+  }
+  if (typeof value.isBeta === 'boolean') result.isBeta = value.isBeta;
+  else invalidMetadataField('isBeta', '必须是布尔值。');
 
-  return {
-    author: value.author as string,
-    name: value.name as string,
-    homepage: value.homepage as string,
-    version: value.version as string,
-    isBeta: value.isBeta,
-  };
+  return result;
 };
 
 /** Read metadata.json from a NitroPatcher ZIP package on disk. */

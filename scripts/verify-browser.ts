@@ -36,10 +36,11 @@ const api = runInNewContext(`${compiled.code}\nNitroBrowser`, {
     patch: Uint8Array,
   ) => { buffer: Uint8Array; outputMd5: string; returnValue: string };
   inspectRom: (rom: Uint8Array) => { gameCode: string; fileCount: number };
-  readPatchMetadata: (patch: Uint8Array) => { name: string; isBeta: boolean } | null;
+  readPatchMetadata: (patch: Uint8Array) => { name?: string; isBeta?: boolean } | null;
 };
 const original = createRom();
 const patchMetadata = {
+  id: 'browser-patch',
   author: 'Example Team',
   name: 'Browser Patch',
   homepage: 'https://example.com',
