@@ -1,6 +1,6 @@
 {
   "name": "nitro-patcher",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Native Node.js Nintendo DS ROM reader, repacker and ZIP/Xdelta patcher",
   "type": "module",
   "engines": {
