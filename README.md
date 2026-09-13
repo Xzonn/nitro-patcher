@@ -4,6 +4,8 @@
 
 运行环境：Node.js 22 或更高版本。
 
+完整的使用说明：<https://github.com/Xzonn/nitro-patcher/wiki>。
+
 ## 安装与 CLI
 
 ```sh
