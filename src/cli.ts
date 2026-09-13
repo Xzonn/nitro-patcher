@@ -159,7 +159,7 @@ const main = async (): Promise<void> => {
             hyperlinks: false,
           })
         : content;
-    sections.push(`补丁说明：\n\n${rendered.trimEnd()}`);
+    sections.push(`补丁说明：\n\n${rendered.trim()}`);
   }
   if (dryRun) sections.push('试运行完成，未写入输出 ROM。');
   sections.push(`${returnValue}\n\n原始 ROM 的 MD5：${inputMd5}\n生成 ROM 的 MD5：${outputMd5}`);

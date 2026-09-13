@@ -54,6 +54,7 @@ test('CLI creates a patched ROM, displays package information and keeps JSON mac
     );
     const result = run(['--json', original, patch, output]);
     assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
     const metadata = JSON.parse(result.stdout) as {
       returnValue: unknown;
       outputMd5: string;
@@ -73,6 +74,7 @@ test('CLI creates a patched ROM, displays package information and keeps JSON mac
     });
     const human = run([original, patch, humanOutput]);
     assert.equal(human.status, 0, human.stderr);
+    assert.equal(human.stderr, '');
     assert.match(human.stdout, /补丁元数据/);
     assert.match(human.stdout, /CLI Patch/);
     assert.match(human.stdout, /版本：1\.0\.0（测试版）/);

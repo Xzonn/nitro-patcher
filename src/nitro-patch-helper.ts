@@ -77,9 +77,12 @@ const readMetadata = (files: Map<string, Buffer>): PatchMetadata | null => {
   const value = metadata as Record<string, unknown>;
   const result: PatchMetadata = {};
   for (const field of ['id', 'author', 'name', 'homepage', 'version'] as const) {
-    if (typeof value[field] === 'string') result[field] = value[field];
+    const fieldValue = value[field];
+    if (fieldValue === undefined) continue;
+    if (typeof fieldValue === 'string') result[field] = fieldValue;
     else invalidMetadataField(field, '必须是字符串。');
   }
+  if (value.isBeta === undefined) return result;
   if (typeof value.isBeta === 'boolean') result.isBeta = value.isBeta;
   else invalidMetadataField('isBeta', '必须是布尔值。');
 

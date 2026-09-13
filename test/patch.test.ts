@@ -37,6 +37,7 @@ test('reads and validates patch metadata field by field', async () => {
         isBeta: expected.isBeta,
       },
     );
+    assert.equal(warnings.length, 1);
     assert.deepEqual(
       readPatchMetadata(
         makeZip({ 'metadata.json': JSON.stringify({ ...expected, isBeta: 'yes' }) }),
@@ -52,10 +53,9 @@ test('reads and validates patch metadata field by field', async () => {
   } finally {
     console.warn = originalWarn;
   }
-  assert.equal(warnings.length, 3);
+  assert.equal(warnings.length, 2);
   assert.match(String(warnings[0]?.[0]), /metadata\.json/);
-  assert.match(String(warnings[1]?.[0]), /id/);
-  assert.match(String(warnings[2]?.[0]), /isBeta/);
+  assert.match(String(warnings[1]?.[0]), /isBeta/);
 });
 
 test('reads a root patch README with Markdown preferred over plain text', async () => {
