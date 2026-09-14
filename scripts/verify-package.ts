@@ -109,7 +109,7 @@ try {
   // imports can resolve only the installed tarball, never workspace sources.
   const consumer = `import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { NDSFile, PatchHelper, patchBuffer, patchIt, readPatchInfo, readPatchMetadata, readPatchMetadataFile, readPatchReadme, readPatchReadmeFile } from 'nitro-patcher';
+import { NDSFile, PatchHelper, extractZipEntry, patchBuffer, patchIt, readPatchInfo, readPatchMetadata, readPatchMetadataFile, readPatchReadme, readPatchReadmeFile } from 'nitro-patcher';
 import { NDSFile as HelperNDSFile } from 'nitro-patcher/nitro-helper';
 import { PatchHelper as HelperPatchHelper } from 'nitro-patcher/nitro-patch-helper';
 
@@ -127,6 +127,7 @@ assert.equal(readme?.format, 'markdown');
 assert.match(readme?.content ?? '', /Installed package instructions/);
 assert.deepEqual(await readPatchReadmeFile('./patch.zip'), readme);
 assert.deepEqual(readPatchInfo(archive), { metadata, readme });
+assert.match(extractZipEntry(archive, 'metadata.json').toString(), /package-patch/);
 const original = new NDSFile(source);
 assert.equal(original.getFile('data/hello.txt').toString(), 'before package patch\\n');
 const result = patchBuffer(source, archive);
@@ -185,7 +186,7 @@ console.log('Installed package CLI, root/subpath API, patch roundtrip and declar
   await writeFile(
     join(temporary, 'browser-consumer.ts'),
     `
-import { patchBuffer, inspectRom, readPatchInfo, readPatchMetadata, readPatchReadme, PatchHelper, NitroHelper } from 'nitro-patcher/browser';
+import { extractZipEntry, patchBuffer, inspectRom, readPatchInfo, readPatchMetadata, readPatchReadme, PatchHelper, NitroHelper } from 'nitro-patcher/browser';
 export const check = (rom: Uint8Array, patch: Uint8Array): Blob => {
   const result = patchBuffer(rom, patch);
   const bytes: Uint8Array<ArrayBuffer> = result.buffer;
@@ -196,6 +197,7 @@ export const check = (rom: Uint8Array, patch: Uint8Array): Blob => {
   const readmeContent: string | undefined = readPatchReadme(patch)?.content;
   const readmeFormat: 'markdown' | 'plaintext' | undefined = readPatchReadme(patch)?.format;
   const infoName: string | undefined = readPatchInfo(patch).metadata?.name;
+  const extracted: Uint8Array = extractZipEntry(patch, 'metadata.json');
   PatchHelper.patchBuffer(rom, patch, { maxOutputSize: 1024 });
   // @ts-expect-error Browser bytes have no Node Buffer methods.
   result.buffer.readUInt32LE(0);

@@ -204,3 +204,18 @@ export const readZip = (input: Uint8Array, options: ZipOptions = {}): Map<string
     if (ranges[i]!.start < ranges[i - 1]!.end) fail('overlapping local entry ranges');
   return result;
 };
+
+/** Extract one file using the same normalized, case-insensitive paths as readZip. */
+export const extractZipEntry = (
+  input: Uint8Array,
+  entryName: string,
+  options: ZipOptions = {},
+): Buffer => {
+  if (typeof entryName !== 'string' || !entryName)
+    throw new TypeError('ZIP entry name must be a non-empty string');
+  const normalized = entryName.replaceAll('\\', '/').toLowerCase();
+  if (normalized.endsWith('/')) fail(`entry ${JSON.stringify(entryName)} is a directory`);
+  const entry = readZip(input, options).get(normalized);
+  if (entry === undefined) return fail(`entry ${JSON.stringify(entryName)} not found`);
+  return entry;
+};

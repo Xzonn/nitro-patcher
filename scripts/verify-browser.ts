@@ -36,6 +36,7 @@ const api = runInNewContext(`${compiled.code}\nNitroBrowser`, {
     patch: Uint8Array,
   ) => { buffer: Uint8Array; outputMd5: string; returnValue: string };
   inspectRom: (rom: Uint8Array) => { gameCode: string; fileCount: number };
+  extractZipEntry: (archive: Uint8Array, entryName: string) => Uint8Array;
   readPatchMetadata: (patch: Uint8Array) => { name?: string; isBeta?: boolean } | null;
   readPatchReadme: (patch: Uint8Array) => {
     format: 'markdown' | 'plaintext';
@@ -65,5 +66,7 @@ assert.equal(api.inspectRom(original).gameCode, 'TST0');
 assert.equal(JSON.stringify(api.readPatchMetadata(patch)), JSON.stringify(patchMetadata));
 assert.equal(api.readPatchReadme(patch)?.content, '# Browser patch');
 assert.equal(api.readPatchReadme(patch)?.format, 'markdown');
+const outer = makeZip({ 'downloads/patch.xzp': patch });
+assert.ok(Buffer.from(api.extractZipEntry(outer, 'downloads/patch.xzp')).equals(patch));
 assert.throws(() => api.patchBuffer(original, new Uint8Array([1, 2])), /ZIP/);
 console.log('Browser entry works without Node globals; patch output matches native Node');

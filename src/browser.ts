@@ -1,5 +1,6 @@
 import { NDSFile } from './nitro/nds-file';
 import {
+  extractZipEntry as extractEntry,
   patchBuffer as patch,
   readPatchInfo as readInfo,
   readPatchMetadata as readMetadata,
@@ -91,8 +92,15 @@ export const readPatchReadme = (
 /** Read metadata and README content while parsing the patch package only once. */
 export const readPatchInfo = (archive: Uint8Array, options: BrowserPatchOptions = {}): PatchInfo =>
   readInfo(archive, options);
+/** Extract one file from a ZIP archive entirely in memory. */
+export const extractZipEntry = (
+  archive: Uint8Array,
+  entryName: string,
+  options: BrowserPatchOptions = {},
+): Uint8Array<ArrayBuffer> => new Uint8Array(extractEntry(archive, entryName, options));
 
 export const PatchHelper = Object.freeze({
+  extractZipEntry,
   patchBuffer,
   readPatchInfo,
   readPatchMetadata,

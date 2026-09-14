@@ -2,7 +2,7 @@
 import { hashDigest, readFile } from '#nitro-runtime';
 import { bytes } from './nitro/binary';
 import { NDSFile } from './nitro/nds-file';
-import { readZip } from './patch/zip';
+import { extractZipEntry as extractEntry, readZip } from './patch/zip';
 import { decodeXdelta } from './patch/xdelta';
 
 export const PatchReturnValue = Object.freeze({
@@ -128,6 +128,13 @@ export const readPatchInfo = (patch: Uint8Array, options: PatchOptions = {}): Pa
   return { metadata: readMetadata(files), readme: readReadme(files) };
 };
 
+/** Extract one file from a ZIP archive entirely in memory. */
+export const extractZipEntry = (
+  archive: Uint8Array,
+  entryName: string,
+  options: PatchOptions = {},
+): Buffer => extractEntry(archive, entryName, options);
+
 /** Read metadata.json from a NitroPatcher ZIP package on disk. */
 export const readPatchMetadataFile = async (
   patchPath: string,
@@ -204,6 +211,7 @@ export const patchIt = async (
 
 /** Namespaced counterpart of the original C# helper, sharing the same typed functions. */
 export const PatchHelper = Object.freeze({
+  extractZipEntry,
   patchBuffer,
   patchIt,
   readPatchInfo,

@@ -77,6 +77,14 @@ test('reads a root patch README with Markdown preferred over plain text', async 
   assert.equal(readPatchReadme(makeZip({})), null);
 });
 
+test('extracts one ZIP entry with normalized case-insensitive paths', async () => {
+  const { extractZipEntry } = await import('../src/nitro-patch-helper');
+  const archive = makeZip({ 'Patches\\Example.xzp': 'patch bytes' });
+  assert.equal(extractZipEntry(archive, 'patches/example.xzp').toString(), 'patch bytes');
+  assert.throws(() => extractZipEntry(archive, 'missing.xzp'), /not found/);
+  assert.throws(() => extractZipEntry(archive, ''), /non-empty/);
+});
+
 test('invalid UTF-8 README is warned about and falls back to README.txt', async () => {
   const { readPatchReadme } = await import('../src/nitro-patch-helper');
   const warnings: unknown[][] = [];
