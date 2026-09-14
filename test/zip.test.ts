@@ -1,9 +1,10 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { deflateRawSync } from 'node:zlib';
-import { readZip } from '../src/patch/zip';
-import { makeZip } from './fixtures';
-import { crc32 } from '../src/nitro/crc';
+import assert from "node:assert/strict";
+import test from "node:test";
+import { deflateRawSync } from "node:zlib";
+
+import { makeZip } from "./fixtures";
+import { crc32 } from "../src/nitro/crc";
+import { readZip } from "../src/patch/zip";
 
 interface EntryOptions {
   name?: Buffer;
@@ -15,8 +16,8 @@ interface EntryOptions {
   extra?: Buffer;
 }
 function oneEntry({
-  name = Buffer.from('a.txt'),
-  data = Buffer.from('123456789'),
+  name = Buffer.from("a.txt"),
+  data = Buffer.from("123456789"),
   method = 8,
   descriptor = false,
   signedDescriptor = true,
@@ -67,49 +68,49 @@ function oneEntry({
   return Buffer.concat([payload, directory, end]);
 }
 
-test('stored archive matches PatchHelper path normalization and duplicate precedence', () => {
+test("stored archive matches PatchHelper path normalization and duplicate precedence", () => {
   const archive = makeZip([
-    ['DIR/', ''],
-    ['DIR\\File.BIN', 'first'],
-    ['dir/file.bin', 'last'],
-    ['空/文件.txt', '数据'],
+    ["DIR/", ""],
+    ["DIR\\File.BIN", "first"],
+    ["dir/file.bin", "last"],
+    ["空/文件.txt", "数据"],
   ]);
   const entries = readZip(archive);
-  assert.deepEqual([...entries.keys()], ['dir/file.bin', '空/文件.txt']);
-  assert.equal(entries.get('dir/file.bin')?.toString(), 'last');
-  assert.equal(entries.get('空/文件.txt')?.toString(), '数据');
+  assert.deepEqual([...entries.keys()], ["dir/file.bin", "空/文件.txt"]);
+  assert.equal(entries.get("dir/file.bin")?.toString(), "last");
+  assert.equal(entries.get("空/文件.txt")?.toString(), "数据");
 });
-test('deflated entries support central-directory sizes and signed/unsigned data descriptors', () => {
+test("deflated entries support central-directory sizes and signed/unsigned data descriptors", () => {
   for (const options of [{}, { descriptor: true }, { descriptor: true, signedDescriptor: false }]) {
-    assert.equal(readZip(oneEntry(options)).get('a.txt')?.toString(), '123456789');
+    assert.equal(readZip(oneEntry(options)).get("a.txt")?.toString(), "123456789");
   }
 });
-test('CP437 names and CRC-verified Unicode path extras are decoded', () => {
+test("CP437 names and CRC-verified Unicode path extras are decoded", () => {
   const name = Buffer.from([0x82, 0x2e, 0x74, 0x78, 0x74]);
   assert.equal(
     readZip(oneEntry({ name, flags: 0 }))
-      .get('é.txt')
+      .get("é.txt")
       ?.toString(),
-    '123456789',
+    "123456789",
   );
-  const unicode = Buffer.from('目录/名字.txt');
+  const unicode = Buffer.from("目录/名字.txt");
   const extra = Buffer.alloc(9 + unicode.length);
   extra.writeUInt16LE(0x7075);
   extra.writeUInt16LE(5 + unicode.length, 2);
   extra[4] = 1;
   extra.writeUInt32LE(crc32(name), 5);
   unicode.copy(extra, 9);
-  assert.ok(readZip(oneEntry({ name, flags: 0, extra })).has('目录/名字.txt'));
+  assert.ok(readZip(oneEntry({ name, flags: 0, extra })).has("目录/名字.txt"));
   extra[5] = extra[5]! ^ 1;
-  assert.ok(readZip(oneEntry({ name, flags: 0, extra })).has('é.txt'));
+  assert.ok(readZip(oneEntry({ name, flags: 0, extra })).has("é.txt"));
 });
-test('valid empty ZIP and archive comments are supported', () => {
+test("valid empty ZIP and archive comments are supported", () => {
   assert.equal(readZip(makeZip([])).size, 0);
   const zip = oneEntry();
   zip.writeUInt16LE(3, zip.length - 2);
-  assert.equal(readZip(Buffer.concat([zip, Buffer.from('end')])).size, 1);
+  assert.equal(readZip(Buffer.concat([zip, Buffer.from("end")])).size, 1);
 });
-test('CRC corruption, truncated ranges, mismatched local headers and invalid UTF-8 fail', () => {
+test("CRC corruption, truncated ranges, mismatched local headers and invalid UTF-8 fail", () => {
   const zip = oneEntry({ method: 0 });
   zip[35] = zip[35]! ^ 1;
   assert.throws(() => readZip(zip), /CRC/i);
@@ -120,13 +121,13 @@ test('CRC corruption, truncated ranges, mismatched local headers and invalid UTF
   assert.throws(() => readZip(wrongLocal), /local|method/i);
   assert.throws(() => readZip(oneEntry({ name: Buffer.from([0xff]) })), /UTF-8/i);
 });
-test('ZIP bomb budgets use all entries including overwritten names and advertised size bounds inflation', () => {
+test("ZIP bomb budgets use all entries including overwritten names and advertised size bounds inflation", () => {
   assert.throws(
     () =>
       readZip(
         makeZip([
-          ['x', 'aaaa'],
-          ['x', 'bbbb'],
+          ["x", "aaaa"],
+          ["x", "bbbb"],
         ]),
         { maxUncompressedSize: 7 },
       ),
@@ -136,8 +137,8 @@ test('ZIP bomb budgets use all entries including overwritten names and advertise
     () =>
       readZip(
         makeZip([
-          ['x', 'a'],
-          ['y', 'b'],
+          ["x", "a"],
+          ["y", "b"],
         ]),
         { maxEntries: 1 },
       ),
@@ -149,7 +150,7 @@ test('ZIP bomb budgets use all entries including overwritten names and advertise
   zip.writeUInt32LE(1, cd + 24);
   assert.throws(() => readZip(zip), /inflate|size|length/i);
 });
-test('encrypted, split, ZIP64 and unsupported compression archives are rejected explicitly', () => {
+test("encrypted, split, ZIP64 and unsupported compression archives are rejected explicitly", () => {
   assert.throws(() => readZip(oneEntry({ flags: 1 })), /encrypt/i);
   assert.throws(() => readZip(oneEntry({ method: 12 })), /compression/i);
   const split = oneEntry();

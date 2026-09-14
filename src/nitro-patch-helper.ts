@@ -1,13 +1,14 @@
 // Native TypeScript port of NitroPatchHelper/PatchHelper.cs, GPL-3.0.
-import { hashDigest, readFile } from '#nitro-runtime';
-import { bytes } from './nitro/binary';
-import { NDSFile } from './nitro/nds-file';
-import { extractZipEntry as extractEntry, readZip } from './patch/zip';
-import { decodeXdelta } from './patch/xdelta';
+import { hashDigest, readFile } from "#nitro-runtime";
+
+import { bytes } from "./nitro/binary";
+import { NDSFile } from "./nitro/nds-file";
+import { decodeXdelta } from "./patch/xdelta";
+import { extractZipEntry as extractEntry, readZip } from "./patch/zip";
 
 export const PatchReturnValue = Object.freeze({
-  SUCCESS: 'SUCCESS',
-  MD5_MISMATCH: 'MD5_MISMATCH',
+  SUCCESS: "SUCCESS",
+  MD5_MISMATCH: "MD5_MISMATCH",
 } as const);
 export type PatchReturnValue = (typeof PatchReturnValue)[keyof typeof PatchReturnValue];
 
@@ -41,7 +42,7 @@ export interface PatchMetadata {
 }
 
 export interface PatchReadme {
-  format: 'markdown' | 'plaintext';
+  format: "markdown" | "plaintext";
   content: string;
 }
 
@@ -50,7 +51,7 @@ export interface PatchInfo {
   readme: PatchReadme | null;
 }
 
-const md5 = (data: Uint8Array): string => hashDigest('md5', data).toString('hex');
+const md5 = (data: Uint8Array): string => hashDigest("md5", data).toString("hex");
 const invalidMetadata = (message: string): null => {
   console.warn(`忽略 metadata.json：${message}`);
   return null;
@@ -60,46 +61,46 @@ const invalidMetadataField = (field: keyof PatchMetadata, message: string): void
 };
 
 const readMetadata = (files: Map<string, Buffer>): PatchMetadata | null => {
-  const file = files.get('metadata.json');
+  const file = files.get("metadata.json");
   if (!file) return null;
 
   let metadata: unknown;
   try {
-    metadata = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(file));
+    metadata = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(file));
   } catch (error) {
     return invalidMetadata(
       `格式错误，可能是因为补丁包已损坏：${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
-    return invalidMetadata('根节点必须是对象。');
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata))
+    return invalidMetadata("根节点必须是对象。");
 
   const value = metadata as Record<string, unknown>;
   const result: PatchMetadata = {};
-  for (const field of ['id', 'author', 'name', 'homepage', 'version'] as const) {
+  for (const field of ["id", "author", "name", "homepage", "version"] as const) {
     const fieldValue = value[field];
     if (fieldValue === undefined) continue;
-    if (typeof fieldValue === 'string') result[field] = fieldValue;
-    else invalidMetadataField(field, '必须是字符串。');
+    if (typeof fieldValue === "string") result[field] = fieldValue;
+    else invalidMetadataField(field, "必须是字符串。");
   }
   if (value.isBeta === undefined) return result;
-  if (typeof value.isBeta === 'boolean') result.isBeta = value.isBeta;
-  else invalidMetadataField('isBeta', '必须是布尔值。');
+  if (typeof value.isBeta === "boolean") result.isBeta = value.isBeta;
+  else invalidMetadataField("isBeta", "必须是布尔值。");
 
   return result;
 };
 
 const readReadme = (files: Map<string, Buffer>): PatchReadme | null => {
   for (const [filename, format] of [
-    ['README.md', 'markdown'],
-    ['README.txt', 'plaintext'],
+    ["README.md", "markdown"],
+    ["README.txt", "plaintext"],
   ] as const) {
     const file = files.get(filename.toLowerCase());
     if (!file) continue;
     try {
       return {
         format,
-        content: new TextDecoder('utf-8', { fatal: true }).decode(file),
+        content: new TextDecoder("utf-8", { fatal: true }).decode(file),
       };
     } catch (error) {
       console.warn(
@@ -111,16 +112,12 @@ const readReadme = (files: Map<string, Buffer>): PatchReadme | null => {
 };
 
 /** Read and validate metadata.json from a NitroPatcher ZIP package. */
-export const readPatchMetadata = (
-  patch: Uint8Array,
-  options: PatchOptions = {},
-): PatchMetadata | null => readMetadata(readZip(patch, options));
+export const readPatchMetadata = (patch: Uint8Array, options: PatchOptions = {}): PatchMetadata | null =>
+  readMetadata(readZip(patch, options));
 
 /** Read a root README.md or README.txt from a NitroPatcher ZIP package. */
-export const readPatchReadme = (
-  patch: Uint8Array,
-  options: PatchOptions = {},
-): PatchReadme | null => readReadme(readZip(patch, options));
+export const readPatchReadme = (patch: Uint8Array, options: PatchOptions = {}): PatchReadme | null =>
+  readReadme(readZip(patch, options));
 
 /** Read metadata and README content while parsing the patch package only once. */
 export const readPatchInfo = (patch: Uint8Array, options: PatchOptions = {}): PatchInfo => {
@@ -129,11 +126,8 @@ export const readPatchInfo = (patch: Uint8Array, options: PatchOptions = {}): Pa
 };
 
 /** Extract one file from a ZIP archive entirely in memory. */
-export const extractZipEntry = (
-  archive: Uint8Array,
-  entryName: string,
-  options: PatchOptions = {},
-): Buffer => extractEntry(archive, entryName, options);
+export const extractZipEntry = (archive: Uint8Array, entryName: string, options: PatchOptions = {}): Buffer =>
+  extractEntry(archive, entryName, options);
 
 /** Read metadata.json from a NitroPatcher ZIP package on disk. */
 export const readPatchMetadataFile = async (
@@ -142,40 +136,29 @@ export const readPatchMetadataFile = async (
 ): Promise<PatchMetadata | null> => readPatchMetadata(await readFile(patchPath), options);
 
 /** Read a patch README from disk. */
-export const readPatchReadmeFile = async (
-  patchPath: string,
-  options: PatchOptions = {},
-): Promise<PatchReadme | null> => readPatchReadme(await readFile(patchPath), options);
+export const readPatchReadmeFile = async (patchPath: string, options: PatchOptions = {}): Promise<PatchReadme | null> =>
+  readPatchReadme(await readFile(patchPath), options);
 
 /** Read patch metadata and README content from disk. */
-export const readPatchInfoFile = async (
-  patchPath: string,
-  options: PatchOptions = {},
-): Promise<PatchInfo> => readPatchInfo(await readFile(patchPath), options);
+export const readPatchInfoFile = async (patchPath: string, options: PatchOptions = {}): Promise<PatchInfo> =>
+  readPatchInfo(await readFile(patchPath), options);
 
 /** Apply an existing NitroPatcher ZIP package entirely in memory. */
-export const patchBuffer = (
-  original: Uint8Array,
-  patch: Uint8Array,
-  options: PatchOptions = {},
-): PatchResult => {
-  const input = bytes(original, 'original ROM');
+export const patchBuffer = (original: Uint8Array, patch: Uint8Array, options: PatchOptions = {}): PatchResult => {
+  const input = bytes(original, "original ROM");
   const patches = readZip(patch, options);
   const inputMd5 = md5(input);
   const preprocessing = patches.get(`preprocessing/${inputMd5}.xdelta`);
-  const rom = new NDSFile(
-    preprocessing ? decodeXdelta(input, preprocessing, options) : input,
-    options,
-  );
+  const rom = new NDSFile(preprocessing ? decodeXdelta(input, preprocessing, options) : input, options);
   let matched = true;
-  const md5File = patches.get('md5.txt');
+  const md5File = patches.get("md5.txt");
   if (md5File) {
     matched = false;
-    for (const line of md5File.toString('utf8').split('\n')) {
+    for (const line of md5File.toString("utf8").split("\n")) {
       const expected = line.trim();
-      if (!expected || expected.startsWith('#')) continue;
+      if (!expected || expected.startsWith("#")) continue;
       // Keep the original format contract: exactly 32 characters, case-insensitive comparison.
-      if (expected.length !== 32) throw new Error('md5.txt 格式错误，可能是因为补丁包已损坏。');
+      if (expected.length !== 32) throw new Error("md5.txt 格式错误，可能是因为补丁包已损坏。");
       if (expected.toLowerCase() === inputMd5) {
         matched = true;
         break;
@@ -183,11 +166,9 @@ export const patchBuffer = (
     }
   }
   for (const { path } of rom.listFiles()) {
-    const normalized = path.replaceAll('\\', '/').toLowerCase();
+    const normalized = path.replaceAll("\\", "/").toLowerCase();
     const delta = patches.get(`xdelta/${normalized}`);
-    const replacement = delta
-      ? decodeXdelta(rom.getFile(path), delta, options)
-      : patches.get(normalized);
+    const replacement = delta ? decodeXdelta(rom.getFile(path), delta, options) : patches.get(normalized);
     if (replacement) rom.replaceFile(path, replacement);
   }
   const buffer = rom.toBuffer();
@@ -221,5 +202,5 @@ export const PatchHelper = Object.freeze({
   readPatchReadme,
   readPatchReadmeFile,
 });
-export { decodeXdelta } from './patch/xdelta';
-export type { XdeltaOptions } from './patch/xdelta';
+export { decodeXdelta } from "./patch/xdelta";
+export type { XdeltaOptions } from "./patch/xdelta";

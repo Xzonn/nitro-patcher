@@ -2,7 +2,7 @@ name: Publish stable npm release
 
 on:
   push:
-    tags: ['v*']
+    tags: ["v*"]
 
 permissions:
   contents: read
@@ -19,7 +19,7 @@ jobs:
       - uses: pnpm/action-setup@v6.0.9
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: "24"
           cache: pnpm
       - name: Validate stable release tag
         # Read the ref as data. Never interpolate a tag into executable code.
@@ -65,7 +65,7 @@ jobs:
       - uses: pnpm/action-setup@v6.0.9
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: "24"
           package-manager-cache: false
       - uses: actions/download-artifact@v8
         with:

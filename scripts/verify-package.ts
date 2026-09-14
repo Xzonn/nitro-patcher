@@ -1,33 +1,34 @@
-import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { access, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { createRom, makeZip } from '../test/fixtures';
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { access, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+import { createRom, makeZip } from "../test/fixtures";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pnpmCli = process.env.npm_execpath;
-if (!pnpmCli || !process.env.npm_config_user_agent?.startsWith('pnpm/')) {
-  throw new Error('Run this smoke test through pnpm run test:package [package.tgz]');
+if (!pnpmCli || !process.env.npm_config_user_agent?.startsWith("pnpm/")) {
+  throw new Error("Run this smoke test through pnpm run test:package [package.tgz]");
 }
 if (process.argv.length > 3) {
-  throw new Error('Expected at most one tarball argument');
+  throw new Error("Expected at most one tarball argument");
 }
 
-const temporary = await mkdtemp(join(tmpdir(), 'nitro-patcher-package-'));
+const temporary = await mkdtemp(join(tmpdir(), "nitro-patcher-package-"));
 const runCommand = (command: string, args: string[], cwd: string): string =>
   execFileSync(command, args, {
     cwd,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'inherit'],
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
   });
 const runNode = (args: string[], cwd: string): string => runCommand(process.execPath, args, cwd);
 const callPnpm = (args: string[], cwd: string): string => {
   // pnpm/action-setup exposes a JavaScript entrypoint, while a local Windows
   // installation can expose a standalone executable through npm_execpath.
-  const pnpmArgs = ['--dir', cwd, ...args];
-  return pnpmCli.toLowerCase().endsWith('.exe')
+  const pnpmArgs = ["--dir", cwd, ...args];
+  return pnpmCli.toLowerCase().endsWith(".exe")
     ? runCommand(pnpmCli, pnpmArgs, cwd)
     : runNode([pnpmCli, ...pnpmArgs], cwd);
 };
@@ -40,70 +41,52 @@ try {
   if (process.argv[2]) {
     tarball = resolve(process.argv[2]);
   } else {
-    runPnpm(['pack', '--pack-destination', temporary], root);
-    const archives = (await readdir(temporary)).filter((name) => name.endsWith('.tgz'));
-    assert.equal(archives.length, 1, 'pnpm pack must produce exactly one tarball');
+    runPnpm(["pack", "--pack-destination", temporary], root);
+    const archives = (await readdir(temporary)).filter((name) => name.endsWith(".tgz"));
+    assert.equal(archives.length, 1, "pnpm pack must produce exactly one tarball");
     tarball = join(temporary, archives[0]!);
   }
 
   await writeFile(
-    join(temporary, 'package.json'),
+    join(temporary, "package.json"),
     JSON.stringify({
-      name: 'nitro-patcher-consumer-smoke',
+      name: "nitro-patcher-consumer-smoke",
       private: true,
-      type: 'module',
+      type: "module",
     }),
   );
-  runPnpm(['add', '--ignore-scripts', tarball], temporary);
+  runPnpm(["add", "--ignore-scripts", tarball], temporary);
 
   await access(
-    join(
-      temporary,
-      'node_modules',
-      '.bin',
-      process.platform === 'win32' ? 'nitro-patcher.cmd' : 'nitro-patcher',
-    ),
+    join(temporary, "node_modules", ".bin", process.platform === "win32" ? "nitro-patcher.cmd" : "nitro-patcher"),
   );
-  const help = callPnpm(['exec', 'nitro-patcher', '--help'], temporary);
-  assert.match(help, /nitro-patcher/i, 'installed CLI must print its usage');
-  await writeFile(join(temporary, 'source.nds'), createRom({ hello: 'before package patch\n' }));
+  const help = callPnpm(["exec", "nitro-patcher", "--help"], temporary);
+  assert.match(help, /nitro-patcher/i, "installed CLI must print its usage");
+  await writeFile(join(temporary, "source.nds"), createRom({ hello: "before package patch\n" }));
   await writeFile(
-    join(temporary, 'patch.zip'),
+    join(temporary, "patch.zip"),
     makeZip({
-      'data/hello.txt': 'after package patch\n',
-      'metadata.json': JSON.stringify({
-        id: 'package-patch',
-        author: 'Example Team',
-        name: 'Package Patch',
-        homepage: 'https://example.com',
-        version: '1.0.0',
+      "data/hello.txt": "after package patch\n",
+      "metadata.json": JSON.stringify({
+        id: "package-patch",
+        author: "Example Team",
+        name: "Package Patch",
+        homepage: "https://example.com",
+        version: "1.0.0",
         isBeta: false,
       }),
-      'README.md': '# Package Patch\n\nInstalled package instructions.',
+      "README.md": "# Package Patch\n\nInstalled package instructions.",
     }),
   );
-  const cliOutput = callPnpm(
-    ['exec', 'nitro-patcher', 'source.nds', 'patch.zip', 'cli-output.nds'],
-    temporary,
-  );
+  const cliOutput = callPnpm(["exec", "nitro-patcher", "source.nds", "patch.zip", "cli-output.nds"], temporary);
   assert.match(cliOutput, /Package Patch/);
   assert.match(cliOutput, /Installed package instructions/);
   const dryRunOutput = callPnpm(
-    [
-      'exec',
-      'nitro-patcher',
-      '--dry-run',
-      '-i',
-      'source.nds',
-      '-p',
-      'patch.zip',
-      '-o',
-      'dry-run-output.nds',
-    ],
+    ["exec", "nitro-patcher", "--dry-run", "-i", "source.nds", "-p", "patch.zip", "-o", "dry-run-output.nds"],
     temporary,
   );
   assert.match(dryRunOutput, /未写入输出 ROM/);
-  await assert.rejects(access(join(temporary, 'dry-run-output.nds')));
+  await assert.rejects(access(join(temporary, "dry-run-output.nds")));
 
   // This file is executed and compiled outside the repository. Its package
   // imports can resolve only the installed tarball, never workspace sources.
@@ -158,33 +141,31 @@ if (false) {
 }
 console.log('Installed package CLI, root/subpath API, patch roundtrip and declarations passed');
 `;
-  await writeFile(join(temporary, 'consumer.ts'), consumer);
+  await writeFile(join(temporary, "consumer.ts"), consumer);
   await writeFile(
-    join(temporary, 'tsconfig.json'),
+    join(temporary, "tsconfig.json"),
     JSON.stringify({
       compilerOptions: {
-        target: 'ES2022',
-        module: 'NodeNext',
-        moduleResolution: 'NodeNext',
+        target: "ES2022",
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
         strict: true,
         exactOptionalPropertyTypes: true,
         noUncheckedIndexedAccess: true,
         noEmitOnError: true,
         skipLibCheck: false,
-        types: ['node'],
-        typeRoots: [join(root, 'node_modules', '@types')],
+        types: ["node"],
+        typeRoots: [join(root, "node_modules", "@types")],
       },
-      files: ['consumer.ts'],
+      files: ["consumer.ts"],
     }),
   );
-  process.stdout.write(
-    runNode([join(root, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', temporary], temporary),
-  );
-  process.stdout.write(runNode([join(temporary, 'consumer.js')], temporary));
+  process.stdout.write(runNode([join(root, "node_modules", "typescript", "bin", "tsc"), "-p", temporary], temporary));
+  process.stdout.write(runNode([join(temporary, "consumer.js")], temporary));
   // Check the installed browser declaration with no ambient Node types and
   // without skipping declaration checks, independent of the frontend tsconfig.
   await writeFile(
-    join(temporary, 'browser-consumer.ts'),
+    join(temporary, "browser-consumer.ts"),
     `
 import { extractZipEntry, patchBuffer, inspectRom, readPatchInfo, readPatchMetadata, readPatchReadme, PatchHelper, NitroHelper } from 'nitro-patcher/browser';
 export const check = (rom: Uint8Array, patch: Uint8Array): Blob => {
@@ -211,13 +192,13 @@ export const check = (rom: Uint8Array, patch: Uint8Array): Blob => {
 `,
   );
   await writeFile(
-    join(temporary, 'tsconfig.browser.json'),
+    join(temporary, "tsconfig.browser.json"),
     JSON.stringify({
       compilerOptions: {
-        target: 'ES2022',
-        module: 'NodeNext',
-        moduleResolution: 'NodeNext',
-        lib: ['ES2022', 'DOM'],
+        target: "ES2022",
+        module: "NodeNext",
+        moduleResolution: "NodeNext",
+        lib: ["ES2022", "DOM"],
         types: [],
         strict: true,
         exactOptionalPropertyTypes: true,
@@ -225,20 +206,16 @@ export const check = (rom: Uint8Array, patch: Uint8Array): Blob => {
         skipLibCheck: false,
         noEmit: true,
       },
-      files: ['browser-consumer.ts'],
+      files: ["browser-consumer.ts"],
     }),
   );
   process.stdout.write(
     runNode(
-      [
-        join(root, 'node_modules', 'typescript', 'bin', 'tsc'),
-        '-p',
-        join(temporary, 'tsconfig.browser.json'),
-      ],
+      [join(root, "node_modules", "typescript", "bin", "tsc"), "-p", join(temporary, "tsconfig.browser.json")],
       temporary,
     ),
   );
-  console.log('Installed browser declarations passed without Node types or skipLibCheck');
+  console.log("Installed browser declarations passed without Node types or skipLibCheck");
 } finally {
   await rm(temporary, { recursive: true, force: true });
 }

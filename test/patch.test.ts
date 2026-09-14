@@ -1,55 +1,43 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { createRom, makeZip } from './fixtures';
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import test from "node:test";
 
-test('reads and validates patch metadata field by field', async () => {
-  const { readPatchMetadata } = await import('../src/nitro-patch-helper');
+import { createRom, makeZip } from "./fixtures";
+
+test("reads and validates patch metadata field by field", async () => {
+  const { readPatchMetadata } = await import("../src/nitro-patch-helper");
   const expected = {
-    id: 'example-patch',
-    author: 'Example Team',
-    name: 'Example Translation',
-    homepage: 'https://example.com/patch',
-    version: '1.2.3',
+    id: "example-patch",
+    author: "Example Team",
+    name: "Example Translation",
+    homepage: "https://example.com/patch",
+    version: "1.2.3",
     isBeta: true,
   };
 
-  assert.deepEqual(
-    readPatchMetadata(makeZip({ 'MeTaDaTa.JsOn': JSON.stringify(expected) })),
-    expected,
-  );
+  assert.deepEqual(readPatchMetadata(makeZip({ "MeTaDaTa.JsOn": JSON.stringify(expected) })), expected);
   const warnings: unknown[][] = [];
   const originalWarn = console.warn;
   console.warn = (...arguments_) => warnings.push(arguments_);
   try {
-    assert.equal(readPatchMetadata(makeZip({ 'md5.txt': '0'.repeat(32) })), null);
+    assert.equal(readPatchMetadata(makeZip({ "md5.txt": "0".repeat(32) })), null);
     assert.equal(warnings.length, 0);
-    assert.equal(readPatchMetadata(makeZip({ 'metadata.json': '{' })), null);
-    assert.deepEqual(
-      readPatchMetadata(
-        makeZip({ 'metadata.json': JSON.stringify({ ...expected, id: undefined }) }),
-      ),
-      {
-        author: expected.author,
-        name: expected.name,
-        homepage: expected.homepage,
-        version: expected.version,
-        isBeta: expected.isBeta,
-      },
-    );
+    assert.equal(readPatchMetadata(makeZip({ "metadata.json": "{" })), null);
+    assert.deepEqual(readPatchMetadata(makeZip({ "metadata.json": JSON.stringify({ ...expected, id: undefined }) })), {
+      author: expected.author,
+      name: expected.name,
+      homepage: expected.homepage,
+      version: expected.version,
+      isBeta: expected.isBeta,
+    });
     assert.equal(warnings.length, 1);
-    assert.deepEqual(
-      readPatchMetadata(
-        makeZip({ 'metadata.json': JSON.stringify({ ...expected, isBeta: 'yes' }) }),
-      ),
-      {
-        id: expected.id,
-        author: expected.author,
-        name: expected.name,
-        homepage: expected.homepage,
-        version: expected.version,
-      },
-    );
+    assert.deepEqual(readPatchMetadata(makeZip({ "metadata.json": JSON.stringify({ ...expected, isBeta: "yes" }) })), {
+      id: expected.id,
+      author: expected.author,
+      name: expected.name,
+      homepage: expected.homepage,
+      version: expected.version,
+    });
   } finally {
     console.warn = originalWarn;
   }
@@ -58,44 +46,42 @@ test('reads and validates patch metadata field by field', async () => {
   assert.match(String(warnings[1]?.[0]), /isBeta/);
 });
 
-test('reads a root patch README with Markdown preferred over plain text', async () => {
-  const { readPatchInfo, readPatchReadme } = await import('../src/nitro-patch-helper');
-  const markdown = '# Patch instructions\n\nApply carefully.';
+test("reads a root patch README with Markdown preferred over plain text", async () => {
+  const { readPatchInfo, readPatchReadme } = await import("../src/nitro-patch-helper");
+  const markdown = "# Patch instructions\n\nApply carefully.";
   const archive = makeZip({
-    'README.txt': 'Plain instructions',
-    'ReadMe.Md': markdown,
+    "README.txt": "Plain instructions",
+    "ReadMe.Md": markdown,
   });
-  assert.deepEqual(readPatchReadme(archive), { format: 'markdown', content: markdown });
+  assert.deepEqual(readPatchReadme(archive), { format: "markdown", content: markdown });
   assert.deepEqual(readPatchInfo(archive), {
     metadata: null,
-    readme: { format: 'markdown', content: markdown },
+    readme: { format: "markdown", content: markdown },
   });
-  assert.deepEqual(readPatchReadme(makeZip({ 'README.txt': 'Plain instructions' })), {
-    format: 'plaintext',
-    content: 'Plain instructions',
+  assert.deepEqual(readPatchReadme(makeZip({ "README.txt": "Plain instructions" })), {
+    format: "plaintext",
+    content: "Plain instructions",
   });
   assert.equal(readPatchReadme(makeZip({})), null);
 });
 
-test('extracts one ZIP entry with normalized case-insensitive paths', async () => {
-  const { extractZipEntry } = await import('../src/nitro-patch-helper');
-  const archive = makeZip({ 'Patches\\Example.xzp': 'patch bytes' });
-  assert.equal(extractZipEntry(archive, 'patches/example.xzp').toString(), 'patch bytes');
-  assert.throws(() => extractZipEntry(archive, 'missing.xzp'), /not found/);
-  assert.throws(() => extractZipEntry(archive, ''), /non-empty/);
+test("extracts one ZIP entry with normalized case-insensitive paths", async () => {
+  const { extractZipEntry } = await import("../src/nitro-patch-helper");
+  const archive = makeZip({ "Patches\\Example.xzp": "patch bytes" });
+  assert.equal(extractZipEntry(archive, "patches/example.xzp").toString(), "patch bytes");
+  assert.throws(() => extractZipEntry(archive, "missing.xzp"), /not found/);
+  assert.throws(() => extractZipEntry(archive, ""), /non-empty/);
 });
 
-test('invalid UTF-8 README is warned about and falls back to README.txt', async () => {
-  const { readPatchReadme } = await import('../src/nitro-patch-helper');
+test("invalid UTF-8 README is warned about and falls back to README.txt", async () => {
+  const { readPatchReadme } = await import("../src/nitro-patch-helper");
   const warnings: unknown[][] = [];
   const originalWarn = console.warn;
   console.warn = (...arguments_) => warnings.push(arguments_);
   try {
     assert.deepEqual(
-      readPatchReadme(
-        makeZip({ 'README.md': Buffer.from([0xff]), 'README.txt': 'Fallback instructions' }),
-      ),
-      { format: 'plaintext', content: 'Fallback instructions' },
+      readPatchReadme(makeZip({ "README.md": Buffer.from([0xff]), "README.txt": "Fallback instructions" })),
+      { format: "plaintext", content: "Fallback instructions" },
     );
   } finally {
     console.warn = originalWarn;
@@ -104,39 +90,39 @@ test('invalid UTF-8 README is warned about and falls back to README.txt', async 
   assert.match(String(warnings[0]?.[0]), /README\.md/);
 });
 
-test('patch helper replaces case-insensitive paths, ignores extra files and returns original/output MD5', async () => {
-  const { patchBuffer } = await import('../src/nitro-patch-helper');
-  const { NDSFile } = await import('../src/nitro-helper');
+test("patch helper replaces case-insensitive paths, ignores extra files and returns original/output MD5", async () => {
+  const { patchBuffer } = await import("../src/nitro-patch-helper");
+  const { NDSFile } = await import("../src/nitro-helper");
   const input = createRom();
-  const digest = createHash('md5').update(input).digest('hex');
+  const digest = createHash("md5").update(input).digest("hex");
   const result = patchBuffer(
     input,
     makeZip({
-      'DATA/HELLO.TXT': 'patched',
-      'data/new.txt': 'ignored',
-      'md5.txt': `# comment\n${digest.toUpperCase()}\n`,
+      "DATA/HELLO.TXT": "patched",
+      "data/new.txt": "ignored",
+      "md5.txt": `# comment\n${digest.toUpperCase()}\n`,
     }),
   );
-  assert.equal(result.returnValue, 'SUCCESS');
+  assert.equal(result.returnValue, "SUCCESS");
   assert.equal(result.inputMd5, digest);
-  assert.equal(result.outputMd5, createHash('md5').update(result.buffer).digest('hex'));
+  assert.equal(result.outputMd5, createHash("md5").update(result.buffer).digest("hex"));
   const output = new NDSFile(result.buffer);
-  assert.equal(output.getFile('data/hello.txt').toString(), 'patched');
-  assert.equal(output.hasFile('data/new.txt'), false);
+  assert.equal(output.getFile("data/hello.txt").toString(), "patched");
+  assert.equal(output.hasFile("data/new.txt"), false);
 });
 
-test('MD5 mismatch preserves existing output behavior; malformed list fails', async () => {
-  const { patchBuffer } = await import('../src/nitro-patch-helper');
+test("MD5 mismatch preserves existing output behavior; malformed list fails", async () => {
+  const { patchBuffer } = await import("../src/nitro-patch-helper");
   const input = createRom();
-  const result = patchBuffer(input, makeZip({ 'md5.txt': '0'.repeat(32) }));
-  assert.equal(result.returnValue, 'MD5_MISMATCH');
+  const result = patchBuffer(input, makeZip({ "md5.txt": "0".repeat(32) }));
+  assert.equal(result.returnValue, "MD5_MISMATCH");
   assert.ok(result.buffer.length);
-  assert.throws(() => patchBuffer(input, makeZip({ 'md5.txt': 'bad checksum' })), /md5.txt/);
+  assert.throws(() => patchBuffer(input, makeZip({ "md5.txt": "bad checksum" })), /md5.txt/);
 });
 
-test('Xdelta overrides direct replacement and preprocessing uses original MD5', async () => {
-  const { patchBuffer } = await import('../src/nitro-patch-helper');
-  const { NDSFile } = await import('../src/nitro-helper');
+test("Xdelta overrides direct replacement and preprocessing uses original MD5", async () => {
+  const { patchBuffer } = await import("../src/nitro-patch-helper");
+  const { NDSFile } = await import("../src/nitro-helper");
   const vint = (value: number): number[] => {
     const out = [value & 127];
     while ((value = Math.floor(value / 128))) out.unshift((value & 127) | 128);
@@ -152,28 +138,28 @@ test('Xdelta overrides direct replacement and preprocessing uses original MD5', 
     return Buffer.concat([Buffer.from([0xd6, 0xc3, 0xc4, 0, 0, 0, ...vint(delta.length)]), delta]);
   };
   const input = createRom(),
-    preprocessed = createRom({ item: 'preprocessed' });
-  const md5 = createHash('md5').update(input).digest('hex');
+    preprocessed = createRom({ item: "preprocessed" });
+  const md5 = createHash("md5").update(input).digest("hex");
   const result = patchBuffer(
     input,
     makeZip({
       [`preprocessing/${md5}.xdelta`]: literal(preprocessed),
-      'data/hello.txt': 'direct',
-      'xdelta/data/hello.txt': literal(Buffer.from('delta')),
-      'md5.txt': md5,
+      "data/hello.txt": "direct",
+      "xdelta/data/hello.txt": literal(Buffer.from("delta")),
+      "md5.txt": md5,
     }),
   );
   const rom = new NDSFile(result.buffer);
-  assert.equal(result.returnValue, 'SUCCESS');
-  assert.equal(rom.getFile('data/hello.txt').toString(), 'delta');
-  assert.equal(rom.getFile('data/sub/item.bin').toString(), 'preprocessed');
+  assert.equal(result.returnValue, "SUCCESS");
+  assert.equal(rom.getFile("data/hello.txt").toString(), "delta");
+  assert.equal(rom.getFile("data/sub/item.bin").toString(), "preprocessed");
 });
 
-test('output allocation and ZIP expansion limits apply across the patch pipeline', async () => {
-  const { patchBuffer } = await import('../src/nitro-patch-helper');
+test("output allocation and ZIP expansion limits apply across the patch pipeline", async () => {
+  const { patchBuffer } = await import("../src/nitro-patch-helper");
   assert.throws(
     () =>
-      patchBuffer(createRom(), makeZip({ 'data/hello.txt': 'too much' }), {
+      patchBuffer(createRom(), makeZip({ "data/hello.txt": "too much" }), {
         maxUncompressedSize: 1,
       }),
     /limit|size/i,

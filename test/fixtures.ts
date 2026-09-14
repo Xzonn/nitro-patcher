@@ -43,16 +43,12 @@ function crc32(data: Uint8Array): number {
 function fntBuffer(firstFileId: number): Buffer {
   const rootNames = Buffer.concat([
     Buffer.from([9]),
-    Buffer.from('hello.txt', 'ascii'),
+    Buffer.from("hello.txt", "ascii"),
     Buffer.from([0x83]),
-    Buffer.from('sub', 'ascii'),
+    Buffer.from("sub", "ascii"),
     Buffer.from([0x01, 0xf0, 0]),
   ]);
-  const subNames = Buffer.concat([
-    Buffer.from([8]),
-    Buffer.from('item.bin', 'ascii'),
-    Buffer.from([0]),
-  ]);
+  const subNames = Buffer.concat([Buffer.from([8]), Buffer.from("item.bin", "ascii"), Buffer.from([0])]);
   const mains = Buffer.alloc(16);
   mains.writeUInt32LE(16, 0);
   mains.writeUInt16LE(firstFileId, 4);
@@ -75,12 +71,12 @@ function overlayTable(fileId: number, size: number): Buffer {
 /** Create a deterministic, synthetic Nintendo DS ROM containing two NitroFS files. */
 export const createRom = (options: RomOptions = {}): Buffer => {
   const arm9 = bytes(options.arm9, Buffer.alloc(0x4000));
-  if (arm9.length < 0x4000) throw new RangeError('arm9 must be at least 0x4000 bytes');
+  if (arm9.length < 0x4000) throw new RangeError("arm9 must be at least 0x4000 bytes");
   const arm7 = bytes(options.arm7, Buffer.alloc(0x180, 0xa7));
   const bannerInput = bytes(options.banner, Buffer.alloc(0x840));
   const banner = Buffer.alloc(Math.max(0x840, bannerInput.length));
   bannerInput.copy(banner);
-  const hello = bytes(options.hello, 'hello from a synthetic ROM\n');
+  const hello = bytes(options.hello, "hello from a synthetic ROM\n");
   const item = bytes(options.item, Buffer.from([0x10, 0x20, 0x30, 0x40]));
   const overlay =
     options.overlay === false || options.overlay === undefined
@@ -117,9 +113,9 @@ export const createRom = (options: RomOptions = {}): Buffer => {
 
   rom.fill(0, 0, headerSize);
 
-  rom.write('SYNTHETICROM', 0, 12, 'ascii');
-  rom.write('TST0', 12, 4, 'ascii');
-  rom.write('ZZ', 16, 2, 'ascii');
+  rom.write("SYNTHETICROM", 0, 12, "ascii");
+  rom.write("TST0", 12, 4, "ascii");
+  rom.write("ZZ", 16, 2, "ascii");
   rom[18] = options.dsi ? 2 : 0;
   rom[20] = Math.log2(capacity) - 17;
   rom.writeUInt32LE(arm9Offset, 0x20);
@@ -180,7 +176,7 @@ export const makeZip = (entries: ZipEntries): Buffer => {
   const centralParts = [];
   let offset = 0;
   for (const [rawName, rawData] of normalized) {
-    const name = Buffer.from(String(rawName).replaceAll('\\', '/'));
+    const name = Buffer.from(String(rawName).replaceAll("\\", "/"));
     const data = bytes(rawData, Buffer.alloc(0));
     const checksum = crc32(data);
     const local = Buffer.alloc(30);

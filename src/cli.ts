@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
-import { parseArgs } from 'node:util';
-import { render } from 'markdansi';
-import { patchBuffer, readPatchInfo, type PatchMetadata } from './nitro-patch-helper';
+import { render } from "markdansi";
+import { mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
+import { parseArgs } from "node:util";
+
+import { type PatchMetadata, patchBuffer, readPatchInfo } from "./nitro-patch-helper";
 
 const help = `nitro-patcher — 原生 Node.js NDS ROM 补丁工具
 
@@ -26,14 +27,14 @@ const sameFile = async (input: string, output: string): Promise<boolean> => {
     const destination = await stat(output);
     return original.dev === destination.dev && original.ino === destination.ino;
   } catch (error) {
-    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     return false;
   }
 };
 
 const safeTerminalText = (value: string): string => {
   const characters: string[] = [];
-  for (const character of value.replaceAll('\r\n', '\n').replaceAll('\r', '\n')) {
+  for (const character of value.replaceAll("\r\n", "\n").replaceAll("\r", "\n")) {
     const code = character.codePointAt(0)!;
     if (
       (code < 0x20 && code !== 0x09 && code !== 0x0a) ||
@@ -44,37 +45,37 @@ const safeTerminalText = (value: string): string => {
       continue;
     characters.push(character);
   }
-  return characters.join('');
+  return characters.join("");
 };
 
 const formatMetadata = (metadata: PatchMetadata): string => {
   const labels = {
-    author: '作者',
-    name: '名称',
-    homepage: '主页',
-    version: '版本',
+    author: "作者",
+    name: "名称",
+    homepage: "主页",
+    version: "版本",
   } as const;
   const lines: string[] = [];
-  for (const field of ['author', 'name', 'homepage', 'version'] as const) {
+  for (const field of ["author", "name", "homepage", "version"] as const) {
     const value = metadata[field];
     if (value === undefined) continue;
-    const suffix = field === 'version' && metadata.isBeta ? '（测试版）' : '';
-    lines.push(`- ${labels[field]}：${safeTerminalText(value).replaceAll('\n', ' ')}${suffix}`);
+    const suffix = field === "version" && metadata.isBeta ? "（测试版）" : "";
+    lines.push(`- ${labels[field]}：${safeTerminalText(value).replaceAll("\n", " ")}${suffix}`);
   }
-  return lines.join('\n');
+  return lines.join("\n");
 };
 
 const main = async (): Promise<void> => {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
-      help: { type: 'boolean', short: 'h' },
-      version: { type: 'boolean', short: 'v' },
-      json: { type: 'boolean' },
-      'dry-run': { type: 'boolean' },
-      input: { type: 'string', short: 'i' },
-      patch: { type: 'string', short: 'p' },
-      output: { type: 'string', short: 'o' },
+      help: { type: "boolean", short: "h" },
+      version: { type: "boolean", short: "v" },
+      json: { type: "boolean" },
+      "dry-run": { type: "boolean" },
+      input: { type: "string", short: "i" },
+      patch: { type: "string", short: "p" },
+      output: { type: "string", short: "o" },
     },
   });
   if (values.help) {
@@ -82,38 +83,27 @@ const main = async (): Promise<void> => {
     return;
   }
   if (values.version) {
-    const metadata: unknown = JSON.parse(
-      await readFile(new URL('../package.json', import.meta.url), 'utf8'),
-    );
-    if (
-      !metadata ||
-      typeof metadata !== 'object' ||
-      !('version' in metadata) ||
-      typeof metadata.version !== 'string'
-    )
-      throw new Error('Invalid package version metadata');
+    const metadata: unknown = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+    if (!metadata || typeof metadata !== "object" || !("version" in metadata) || typeof metadata.version !== "string")
+      throw new Error("Invalid package version metadata");
     console.log(metadata.version);
     return;
   }
-  const dryRun = values['dry-run'] ?? false;
-  const usesNamedPaths =
-    values.input !== undefined || values.patch !== undefined || values.output !== undefined;
+  const dryRun = values["dry-run"] ?? false;
+  const usesNamedPaths = values.input !== undefined || values.patch !== undefined || values.output !== undefined;
   if (usesNamedPaths && positionals.length > 0) throw new Error(help);
   if (
     (usesNamedPaths && (!values.input || !values.patch || (!dryRun && !values.output))) ||
     (!usesNamedPaths &&
-      ((!dryRun && positionals.length !== 3) ||
-        (dryRun && (positionals.length < 2 || positionals.length > 3))))
+      ((!dryRun && positionals.length !== 3) || (dryRun && (positionals.length < 2 || positionals.length > 3))))
   )
     throw new Error(help);
-  const [original, patch, output] = usesNamedPaths
-    ? [values.input, values.patch, values.output]
-    : positionals;
+  const [original, patch, output] = usesNamedPaths ? [values.input, values.patch, values.output] : positionals;
   if (!original || !patch) throw new Error(help);
   if (!dryRun) {
     if (!output) throw new Error(help);
     if ((await sameFile(original, output)) || (await sameFile(patch, output)))
-      throw new Error('输出路径不能覆盖原始 ROM 或补丁包。');
+      throw new Error("输出路径不能覆盖原始 ROM 或补丁包。");
   }
   const [originalBytes, patchBytes] = await Promise.all([readFile(original), readFile(patch)]);
   const info = readPatchInfo(patchBytes);
@@ -121,9 +111,9 @@ const main = async (): Promise<void> => {
   if (!dryRun) {
     if (!output) throw new Error(help);
     const destination = join(await realpath(dirname(resolve(output))), basename(output));
-    const temporary = await mkdtemp(join(dirname(destination), '.nitro-patcher-'));
+    const temporary = await mkdtemp(join(dirname(destination), ".nitro-patcher-"));
     try {
-      const file = join(temporary, 'output.nds');
+      const file = join(temporary, "output.nds");
       await writeFile(file, result.buffer);
       await rename(file, destination);
     } finally {
@@ -152,7 +142,7 @@ const main = async (): Promise<void> => {
   if (info.readme) {
     const content = safeTerminalText(info.readme.content);
     const rendered =
-      info.readme.format === 'markdown'
+      info.readme.format === "markdown"
         ? render(content, {
             width: process.stdout.columns ?? 80,
             color: Boolean(process.stdout.isTTY),
@@ -161,9 +151,9 @@ const main = async (): Promise<void> => {
         : content;
     sections.push(`补丁说明：\n\n${rendered.trim()}`);
   }
-  if (dryRun) sections.push('试运行完成，未写入输出 ROM。');
+  if (dryRun) sections.push("试运行完成，未写入输出 ROM。");
   sections.push(`${returnValue}\n\n原始 ROM 的 MD5：${inputMd5}\n生成 ROM 的 MD5：${outputMd5}`);
-  console.log(sections.join('\n\n'));
+  console.log(sections.join("\n\n"));
 };
 
 main().catch((error: unknown) => {

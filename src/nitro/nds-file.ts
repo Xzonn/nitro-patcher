@@ -1,13 +1,14 @@
 // Native TypeScript port of NitroHelper/NDSFile.cs, GPL-3.0.
-import { readFile, writeFile } from '#nitro-runtime';
-import { BinaryWriter, bytes, range, DEFAULT_MAX_SIZE } from './binary';
-import { Header } from './header';
-import { Banner } from './banner';
-import { FileAllocationTable, FileNameTable, OverlayTable } from './filesystem';
-import type { NitroFile, NitroFolder } from './filesystem';
-import { crc16 } from './crc';
-import { encryptSecureArea } from './crypto';
-import { TWL } from './twl';
+import { readFile, writeFile } from "#nitro-runtime";
+
+import { Banner } from "./banner";
+import { BinaryWriter, DEFAULT_MAX_SIZE, bytes, range } from "./binary";
+import { crc16 } from "./crc";
+import { encryptSecureArea } from "./crypto";
+import { FileAllocationTable, FileNameTable, OverlayTable } from "./filesystem";
+import type { NitroFile, NitroFolder } from "./filesystem";
+import { Header } from "./header";
+import { TWL } from "./twl";
 
 export interface RomOptions {
   /** Maximum generated ROM size in bytes. Defaults to 1 GiB. */
@@ -22,7 +23,7 @@ export interface RomFileInfo {
   size: number;
 }
 
-const key = (path: string): string => path.replaceAll('\\', '/').toLowerCase();
+const key = (path: string): string => path.replaceAll("\\", "/").toLowerCase();
 
 /** Parsed Nintendo DS ROM. Replacements do not change the input buffer. */
 export class NDSFile {
@@ -40,31 +41,21 @@ export class NDSFile {
   private readonly maxOutputSize: number;
 
   constructor(input: Uint8Array, options: RomOptions = {}) {
-    this.original = bytes(input, 'ROM');
+    this.original = bytes(input, "ROM");
     this.maxOutputSize = options.maxOutputSize ?? DEFAULT_MAX_SIZE;
     this.header = new Header(this.original);
     const h = this.header;
-    range(this.original, h.ARM9romOffset, h.ARM9size + (h.nitrocode ? 12 : 0), 'ARM9');
-    range(this.original, h.ARM7romOffset, h.ARM7size, 'ARM7');
+    range(this.original, h.ARM9romOffset, h.ARM9size + (h.nitrocode ? 12 : 0), "ARM9");
+    range(this.original, h.ARM7romOffset, h.ARM7size, "ARM7");
     this.banner = new Banner(this.original, h.bannerOffset, h.banner_size);
     this.fatTable = new FileAllocationTable(this.original, h.FAToffset, h.FATsize);
     this.fntTable = new FileNameTable(this.fatTable, this.original, h.FNToffset, h.FNTsize);
     this.root = this.fntTable.root;
-    this.overlay9Table = new OverlayTable(
-      this.original,
-      h.ARM9overlayOffset,
-      h.ARM9overlaySize,
-      true,
-    );
-    this.overlay7Table = new OverlayTable(
-      this.original,
-      h.ARM7overlayOffset,
-      h.ARM7overlaySize,
-      false,
-    );
+    this.overlay9Table = new OverlayTable(this.original, h.ARM9overlayOffset, h.ARM9overlaySize, true);
+    this.overlay7Table = new OverlayTable(this.original, h.ARM7overlayOffset, h.ARM7overlaySize, false);
     const arm9Overlays = this.overlay9Table.readBasicOverlays(this.fatTable);
     this.root.folders.push({
-      name: 'overlay',
+      name: "overlay",
       id: 0xffff,
       files: [...arm9Overlays, ...this.overlay7Table.readBasicOverlays(this.fatTable)],
       folders: [],
@@ -73,23 +64,23 @@ export class NDSFile {
       range(this.original, offset, size, name);
       this.root.files.push({ name, id: 0xffff, offset, size });
     };
-    system('header.bin', 0, h.headerSize);
-    system('banner.bin', h.bannerOffset, this.banner.raw.length);
-    system('fnt.bin', h.FNToffset, h.FNTsize);
-    system('fat.bin', h.FAToffset, h.FATsize);
-    system('arm9.bin', h.ARM9romOffset, h.ARM9size + (h.nitrocode ? 12 : 0));
-    system('arm7.bin', h.ARM7romOffset, h.ARM7size);
-    if (h.ARM9overlaySize) system('overarm9.bin', h.ARM9overlayOffset, h.ARM9overlaySize);
-    if (h.ARM7overlaySize) system('overarm7.bin', h.ARM7overlayOffset, h.ARM7overlaySize);
+    system("header.bin", 0, h.headerSize);
+    system("banner.bin", h.bannerOffset, this.banner.raw.length);
+    system("fnt.bin", h.FNToffset, h.FNTsize);
+    system("fat.bin", h.FAToffset, h.FATsize);
+    system("arm9.bin", h.ARM9romOffset, h.ARM9size + (h.nitrocode ? 12 : 0));
+    system("arm7.bin", h.ARM7romOffset, h.ARM7size);
+    if (h.ARM9overlaySize) system("overarm9.bin", h.ARM9overlayOffset, h.ARM9overlaySize);
+    if (h.ARM7overlaySize) system("overarm7.bin", h.ARM7overlayOffset, h.ARM7overlaySize);
     const visit = (folder: NitroFolder, prefix: string): void => {
       for (const file of folder.files) {
         const path = prefix + file.name;
         if (this.paths.has(key(path))) throw new Error(`Duplicate ROM path: ${path}`);
         this.paths.set(key(path), { path, file });
       }
-      for (const child of folder.folders) visit(child, prefix + child.name + '/');
+      for (const child of folder.folders) visit(child, `${prefix + child.name}/`);
     };
-    visit(this.root, '');
+    visit(this.root, "");
     if (h.unitCode & 2 && h.twlInternalFlags & 1 && h.tid_high && h.tid_high !== 0xffffffff) {
       // Upstream silently discarded malformed TWL regions. Preserve valid DSi data,
       // and reject malformed data instead of emitting a ROM with missing sections.
@@ -135,20 +126,13 @@ export class NDSFile {
 
   /** Rebuild offsets, allocation table, CRCs and ROM padding. Safe to call repeatedly. */
   toBuffer(): Buffer {
-    const fntReplacement = this.root.files.find((file) => file.name === 'fnt.bin')?.replacement;
+    const fntReplacement = this.root.files.find((file) => file.name === "fnt.bin")?.replacement;
     if (fntReplacement) {
-      const replacementTree = new FileNameTable(
-        this.fatTable,
-        fntReplacement,
-        0,
-        fntReplacement.length,
-      );
+      const replacementTree = new FileNameTable(this.fatTable, fntReplacement, 0, fntReplacement.length);
       const collect = (folder: NitroFolder): number[] =>
-        [...folder.files.map((file) => file.id), ...folder.folders.flatMap(collect)].sort(
-          (a, b) => a - b,
-        );
-      if (collect(replacementTree.root).join(',') !== collect(this.data).join(','))
-        throw new Error('Replacement FNT must preserve existing file IDs');
+        [...folder.files.map((file) => file.id), ...folder.folders.flatMap(collect)].sort((a, b) => a - b);
+      if (collect(replacementTree.root).join(",") !== collect(this.data).join(","))
+        throw new Error("Replacement FNT must preserve existing file IDs");
     }
     const h = new Header(this.header.toBuffer());
     h.nitrocode = this.header.nitrocode;
@@ -161,7 +145,7 @@ export class NDSFile {
       if (!file) throw new Error(`Missing ROM system file: ${name}`);
       return file;
     };
-    const replacedHeader = system('header.bin').replacement;
+    const replacedHeader = system("header.bin").replacement;
     if (replacedHeader) {
       const replacement = new Header(replacedHeader);
       h.gameTitle = replacement.gameTitle;
@@ -177,13 +161,13 @@ export class NDSFile {
     const overlayIds = new Set<number>();
     const writeOverlays = (arm9: boolean): void => {
       const originalTable = arm9 ? this.overlay9Table : this.overlay7Table;
-      const name = arm9 ? 'overarm9.bin' : 'overarm7.bin';
+      const name = arm9 ? "overarm9.bin" : "overarm7.bin";
       const entry = this.root.files.find((file) => file.name === name);
       if (!entry) return;
       const raw = entry.replacement ?? originalTable.toBuffer();
       const table = new OverlayTable(raw, 0, raw.length, arm9);
       const files = this.overlay.files
-        .filter((file) => file.name.startsWith(arm9 ? 'overlay_' : 'overlay7_'))
+        .filter((file) => file.name.startsWith(arm9 ? "overlay_" : "overlay7_"))
         .sort((a, b) => a.id - b.id);
       for (const file of files) {
         const item = table.entries.find((item) => item.fileId === file.id);
@@ -193,8 +177,7 @@ export class NDSFile {
           item.reserved = ((item.reserved & 0xff000000) | (size & 0xffffff)) >>> 0;
         overlayIds.add(file.id);
       }
-      if (table.entries.length !== files.length)
-        throw new Error('Changing overlay file count is unsupported');
+      if (table.entries.length !== files.length) throw new Error("Changing overlay file count is unsupported");
       const encoded = table.toBuffer();
       if (arm9) {
         h.ARM9overlayOffset = writer.position;
@@ -209,30 +192,29 @@ export class NDSFile {
     };
     writer.position = h.headerSize;
     h.ARM9romOffset = writer.position;
-    const arm9 = system('arm9.bin');
+    const arm9 = system("arm9.bin");
     const arm9Bytes = this.fileBytes(arm9);
     if (arm9.replacement) {
-      h.nitrocode =
-        arm9Bytes.length >= 12 && arm9Bytes.readUInt32LE(arm9Bytes.length - 12) === 0xdec00621;
+      h.nitrocode = arm9Bytes.length >= 12 && arm9Bytes.readUInt32LE(arm9Bytes.length - 12) === 0xdec00621;
     }
     h.ARM9size = arm9Bytes.length - (h.nitrocode ? 12 : 0);
     write(arm9);
     h.ARM9overlayOffset = 0;
     writeOverlays(true);
     h.ARM7romOffset = writer.position;
-    h.ARM7size = this.fileBytes(system('arm7.bin')).length;
-    write(system('arm7.bin'));
+    h.ARM7size = this.fileBytes(system("arm7.bin")).length;
+    write(system("arm7.bin"));
     h.ARM7overlayOffset = 0;
     writeOverlays(false);
     h.FNToffset = writer.position;
-    h.FNTsize = this.fileBytes(system('fnt.bin')).length;
-    write(system('fnt.bin'));
+    h.FNTsize = this.fileBytes(system("fnt.bin")).length;
+    write(system("fnt.bin"));
     h.FAToffset = writer.position;
     h.FATsize = this.fatTable.entries.length * 8;
     writer.write(Buffer.alloc(h.FATsize));
     writer.pad(0x200);
     h.bannerOffset = writer.position;
-    const bannerFile = system('banner.bin');
+    const bannerFile = system("banner.bin");
     const banner = bannerFile.replacement
       ? new Banner(bannerFile.replacement, 0, bannerFile.replacement.length)
       : this.banner;
@@ -265,8 +247,7 @@ export class NDSFile {
     writer.position = logicalEnd;
     // An ARM9 replacement can add or remove the decrypted secure-area marker.
     // Both TWL hashing and the header CRC must use the bytes being serialized.
-    h.decrypted =
-      writer.length >= 0x4008 && writer.buffer.readBigUInt64LE(0x4000) === 0xe7ffdeffe7ffdeffn;
+    h.decrypted = writer.length >= 0x4008 && writer.buffer.readBigUInt64LE(0x4000) === 0xe7ffdeffe7ffdeffn;
     if (this.twl) this.twl.writeTo(writer, h);
     h.ROMsize = writer.position;
     h.size = 2 ** Math.ceil(Math.log2(Math.max(h.ROMsize + h.dlp_signature.length, 0x20000)));

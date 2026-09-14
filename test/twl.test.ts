@@ -1,10 +1,11 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { createHmac, createHash } from 'node:crypto';
-import { TWL, HMAC_SHA1_KEY, updateHeaderSignatures, type TwlHeader } from '../src/nitro/twl';
-import { compressBLZ, decompressBLZ, compressArm9, decompressArm9 } from '../src/nitro/blz';
-import { BinaryWriter } from '../src/nitro/binary';
-const hash = (b: Buffer) => createHmac('sha1', HMAC_SHA1_KEY).update(b).digest();
+import assert from "node:assert/strict";
+import { createHash, createHmac } from "node:crypto";
+import test from "node:test";
+
+import { BinaryWriter } from "../src/nitro/binary";
+import { compressArm9, compressBLZ, decompressArm9, decompressBLZ } from "../src/nitro/blz";
+import { HMAC_SHA1_KEY, TWL, type TwlHeader, updateHeaderSignatures } from "../src/nitro/twl";
+const hash = (b: Buffer) => createHmac("sha1", HMAC_SHA1_KEY).update(b).digest();
 function fixture() {
   const h: TwlHeader = {
     digest_sector_size: 0x400,
@@ -29,8 +30,8 @@ function fixture() {
     trimmedRom: false,
     twlInternalFlags: 0,
     decrypted: false,
-    gameTitle: 'TEST TITLE12',
-    gameCode: 'ABCD',
+    gameTitle: "TEST TITLE12",
+    gameCode: "ABCD",
     hmac_arm9: Buffer.alloc(20),
     hmac_arm7: Buffer.alloc(20),
     hmac_digest_master: Buffer.alloc(20),
@@ -41,15 +42,12 @@ function fixture() {
   w.position = 0x8000;
   return { h, rom, w };
 }
-test('TWL preserves ARM payloads, rebuilds all three digest levels and final cursor', () => {
+test("TWL preserves ARM payloads, rebuilds all three digest levels and final cursor", () => {
   const { h, rom, w } = fixture();
   const twl = new TWL(h, [], rom);
   twl.writeTo(w, h);
   assert.equal(w.position, h.total_rom_size);
-  assert.deepEqual(
-    w.buffer.subarray(h.dsi9_rom_offset, h.dsi9_rom_offset + h.dsi9_size),
-    twl.DSi9Data,
-  );
+  assert.deepEqual(w.buffer.subarray(h.dsi9_rom_offset, h.dsi9_rom_offset + h.dsi9_size), twl.DSi9Data);
   assert.deepEqual(
     w.buffer.subarray(h.sector_hashtable_start, h.sector_hashtable_start + 20),
     hash(rom.subarray(0x4000, 0x4400)),
@@ -63,26 +61,26 @@ test('TWL preserves ARM payloads, rebuilds all three digest levels and final cur
     hash(w.buffer.subarray(h.sector_hashtable_start, h.sector_hashtable_start + 0x280)),
   );
 });
-test('TWL rejects invalid digest sizes and out-of-range ROM sections', () => {
+test("TWL rejects invalid digest sizes and out-of-range ROM sections", () => {
   const { h, rom } = fixture();
   assert.throws(() => new TWL({ ...h, digest_sector_size: 0 }, [], rom), /sector/);
   assert.throws(() => new TWL({ ...h, dsi9_size: rom.length }, [], rom), /range/);
 });
-test('BLZ roundtrip compressible and incompressible buffers', () => {
-  for (const input of [Buffer.from('ABC'.repeat(1000)), Buffer.alloc(8192, 42)])
+test("BLZ roundtrip compressible and incompressible buffers", () => {
+  for (const input of [Buffer.from("ABC".repeat(1000)), Buffer.alloc(8192, 42)])
     assert.deepEqual(decompressBLZ(compressBLZ(input)), input);
-  assert.equal(compressBLZ(Buffer.from('abcdef')).length, 0);
+  assert.equal(compressBLZ(Buffer.from("abcdef")).length, 0);
   assert.ok(compressBLZ(Buffer.alloc(8192, 42)).length < 8192);
-  assert.throws(() => decompressBLZ(Buffer.from('01000008010000ff', 'hex')), /BLZ/);
+  assert.throws(() => decompressBLZ(Buffer.from("01000008010000ff", "hex")), /BLZ/);
 });
 
-test('TWL rejects NTR output colliding with fixed hash tables before mutation', () => {
+test("TWL rejects NTR output colliding with fixed hash tables before mutation", () => {
   const { h, rom, w } = fixture();
   w.position = h.sector_hashtable_start + 1;
   assert.throws(() => new TWL(h, [], rom).writeTo(w, h), /overlaps/);
   assert.deepEqual(w.buffer, rom);
 });
-test('header signature preserves original by default or writes no$gba SHA1 mask', () => {
+test("header signature preserves original by default or writes no$gba SHA1 mask", () => {
   const original = Buffer.alloc(0x1000, 0x77),
     signature = Buffer.alloc(128, 0x88);
   const header = {
@@ -101,11 +99,11 @@ test('header signature preserves original by default or writes no$gba SHA1 mask'
   assert.equal(header.rsa_signature[107], 0);
   const data = Buffer.from(original.subarray(0, 0xe00));
   header.hmac_digest_master.copy(data, 0x328);
-  assert.deepEqual(header.rsa_signature.subarray(108), createHash('sha1').update(data).digest());
+  assert.deepEqual(header.rsa_signature.subarray(108), createHash("sha1").update(data).digest());
   assert.deepEqual(writer.buffer.subarray(0xf80, 0x1000), header.rsa_signature);
 });
 
-test('encrypted TWL hashes plaintext, encrypts at modcrypt offset and decrypts on read', () => {
+test("encrypted TWL hashes plaintext, encrypts at modcrypt offset and decrypts on read", () => {
   const { h, rom, w } = fixture();
   h.twlInternalFlags = 6;
   h.modcrypt1_start = h.dsi9_rom_offset + 16;
@@ -113,14 +111,8 @@ test('encrypted TWL hashes plaintext, encrypts at modcrypt offset and decrypts o
   const twl = new TWL({ ...h, modcrypt1_start: 0, modcrypt1_size: 0 }, [], rom);
   const plaintext = Buffer.from(twl.DSi9Data);
   twl.writeTo(w, h);
-  assert.deepEqual(
-    w.buffer.subarray(h.dsi9_rom_offset, h.dsi9_rom_offset + 16),
-    plaintext.subarray(0, 16),
-  );
-  assert.notDeepEqual(
-    w.buffer.subarray(h.modcrypt1_start, h.modcrypt1_start + 32),
-    plaintext.subarray(16, 48),
-  );
+  assert.deepEqual(w.buffer.subarray(h.dsi9_rom_offset, h.dsi9_rom_offset + 16), plaintext.subarray(0, 16));
+  assert.notDeepEqual(w.buffer.subarray(h.modcrypt1_start, h.modcrypt1_start + 32), plaintext.subarray(16, 48));
   const reread = new TWL(h, [], w.buffer);
   assert.deepEqual(reread.DSi9Data, plaintext);
   assert.deepEqual(reread.Hashtable1Data.subarray(16 * 20, 17 * 20), hash(plaintext));
@@ -129,7 +121,7 @@ test('encrypted TWL hashes plaintext, encrypts at modcrypt offset and decrypts o
   assert.deepEqual(reread.DSi7Data, Buffer.from([1, 2, 3, ...Array(13).fill(255)]));
 });
 
-test('TWL with only modcrypt2 preserves plaintext and encrypted output across saves', () => {
+test("TWL with only modcrypt2 preserves plaintext and encrypted output across saves", () => {
   const { h, rom, w } = fixture();
   h.twlInternalFlags = 6;
   const twl = new TWL(h, [], rom);
@@ -138,10 +130,7 @@ test('TWL with only modcrypt2 preserves plaintext and encrypted output across sa
   const plaintext = Buffer.from(twl.DSi7Data);
   twl.writeTo(w, h);
   const encrypted = Buffer.from(w.toBuffer());
-  assert.notDeepEqual(
-    encrypted.subarray(h.dsi7_rom_offset, h.dsi7_rom_offset + h.dsi7_size),
-    plaintext,
-  );
+  assert.notDeepEqual(encrypted.subarray(h.dsi7_rom_offset, h.dsi7_rom_offset + h.dsi7_size), plaintext);
   const reread = new TWL(h, [], encrypted);
   assert.deepEqual(reread.DSi7Data, plaintext);
   const second = new BinaryWriter(encrypted.length);
@@ -152,7 +141,7 @@ test('TWL with only modcrypt2 preserves plaintext and encrypted output across sa
   assert.equal(h.twlInternalFlags & 2, 2);
 });
 
-test('overlay HMAC updates preserve uncompressed ARM9 storage', () => {
+test("overlay HMAC updates preserve uncompressed ARM9 storage", () => {
   const { h, rom } = fixture();
   const oldOverlay = rom.subarray(0x5000, 0x5100),
     replacement = Buffer.alloc(0x100, 0xaa);
@@ -172,7 +161,7 @@ test('overlay HMAC updates preserve uncompressed ARM9 storage', () => {
   assert.deepEqual(arm9.subarray(0x6500, 0x6514), hash(oldOverlay));
 });
 
-test('ARM9 BLZ preserves secure prefix and decompresses executable body', () => {
+test("ARM9 BLZ preserves secure prefix and decompresses executable body", () => {
   const header = {
     reserved2: Buffer.from([0x20, 0, 0, 0]),
     ARM9ramAddress: 0x02000000,

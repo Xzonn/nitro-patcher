@@ -1,16 +1,11 @@
 export const DEFAULT_MAX_SIZE = 0x40000000;
 
-export const bytes = (value: Uint8Array, name = 'input'): Buffer => {
+export const bytes = (value: Uint8Array, name = "input"): Buffer => {
   if (!(value instanceof Uint8Array)) throw new TypeError(`${name} must be a Buffer or Uint8Array`);
   return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
 };
 
-export const range = (
-  buffer: Buffer,
-  offset: number,
-  size: number,
-  name = 'binary data',
-): Buffer => {
+export const range = (buffer: Buffer, offset: number, size: number, name = "binary data"): Buffer => {
   if (
     !Number.isSafeInteger(offset) ||
     !Number.isSafeInteger(size) ||
@@ -18,16 +13,12 @@ export const range = (
     size < 0 ||
     offset + size > buffer.length
   ) {
-    throw new RangeError(
-      `Invalid ${name} range: offset=${offset}, size=${size}, available=${buffer.length}`,
-    );
+    throw new RangeError(`Invalid ${name} range: offset=${offset}, size=${size}, available=${buffer.length}`);
   }
   return buffer.subarray(offset, offset + size);
 };
 
-export const align = (value: number, alignment = 0x200): number => {
-  return Math.ceil(value / alignment) * alignment;
-};
+export const align = (value: number, alignment = 0x200): number => Math.ceil(value / alignment) * alignment;
 
 /** Seekable, bounded in-memory writer; unwritten gaps have MemoryStream's zero fill. */
 export class BinaryWriter {
@@ -37,7 +28,7 @@ export class BinaryWriter {
   length: number;
   constructor(initialSize = 65536, maxSize = DEFAULT_MAX_SIZE) {
     if (!Number.isSafeInteger(maxSize) || maxSize < 1 || maxSize > 0xffffffff)
-      throw new RangeError('Invalid output size limit');
+      throw new RangeError("Invalid output size limit");
     this.maxSize = maxSize;
     this.buffer = Buffer.alloc(Math.min(initialSize, maxSize));
     this.position = 0;
@@ -55,8 +46,7 @@ export class BinaryWriter {
 
   write(data: Uint8Array) {
     data = bytes(data);
-    if (!Number.isSafeInteger(this.position) || this.position < 0)
-      throw new RangeError('Invalid writer position');
+    if (!Number.isSafeInteger(this.position) || this.position < 0) throw new RangeError("Invalid writer position");
     this.ensure(this.position + data.length);
     bytes(data).copy(this.buffer, this.position);
     this.position += data.length;

@@ -1,11 +1,11 @@
-import { NDSFile } from './nitro/nds-file';
+import { NDSFile } from "./nitro/nds-file";
 import {
   extractZipEntry as extractEntry,
   patchBuffer as patch,
   readPatchInfo as readInfo,
   readPatchMetadata as readMetadata,
   readPatchReadme as readReadme,
-} from './nitro-patch-helper';
+} from "./nitro-patch-helper";
 
 export interface PatchMetadata {
   id?: string;
@@ -16,7 +16,7 @@ export interface PatchMetadata {
   isBeta?: boolean;
 }
 export interface PatchReadme {
-  format: 'markdown' | 'plaintext';
+  format: "markdown" | "plaintext";
   content: string;
 }
 export interface PatchInfo {
@@ -32,7 +32,7 @@ export interface BrowserPatchOptions {
 }
 export interface BrowserPatchResult {
   buffer: Uint8Array<ArrayBuffer>;
-  returnValue: 'SUCCESS' | 'MD5_MISMATCH';
+  returnValue: "SUCCESS" | "MD5_MISMATCH";
   inputMd5: string;
   outputMd5: string;
 }
@@ -80,15 +80,11 @@ export const patchBuffer = (
   };
 };
 /** Read and validate metadata.json from a patch package entirely in memory. */
-export const readPatchMetadata = (
-  archive: Uint8Array,
-  options: BrowserPatchOptions = {},
-): PatchMetadata | null => readMetadata(archive, options);
+export const readPatchMetadata = (archive: Uint8Array, options: BrowserPatchOptions = {}): PatchMetadata | null =>
+  readMetadata(archive, options);
 /** Read a root README.md or README.txt from a patch package entirely in memory. */
-export const readPatchReadme = (
-  archive: Uint8Array,
-  options: BrowserPatchOptions = {},
-): PatchReadme | null => readReadme(archive, options);
+export const readPatchReadme = (archive: Uint8Array, options: BrowserPatchOptions = {}): PatchReadme | null =>
+  readReadme(archive, options);
 /** Read metadata and README content while parsing the patch package only once. */
 export const readPatchInfo = (archive: Uint8Array, options: BrowserPatchOptions = {}): PatchInfo =>
   readInfo(archive, options);

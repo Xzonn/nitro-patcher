@@ -7,7 +7,7 @@ export interface Arm9Header {
 // Native port of Xzonn/BlzHelper BLZ.cs (MIT), including overwrite-safe prefix.
 // Compression returns an empty Buffer when no smaller representation exists.
 export const decompressBLZ = (input: Buffer, maxSize = 0x10000000): Buffer => {
-  if (input.length < 8) throw new Error('BLZ footer is truncated');
+  if (input.length < 8) throw new Error("BLZ footer is truncated");
   const diff = input.readUInt32LE(input.length - 4);
   const packed = input.readUInt32LE(input.length - 8),
     header = packed >>> 24,
@@ -15,7 +15,7 @@ export const decompressBLZ = (input: Buffer, maxSize = 0x10000000): Buffer => {
   const size = input.length + diff,
     prefix = input.length - length;
   if (header < 8 || header > length || length > input.length || size > maxSize)
-    throw new Error('Invalid BLZ size or footer');
+    throw new Error("Invalid BLZ size or footer");
   const out = Buffer.alloc(size);
   input.copy(out, 0, 0, prefix);
   let src = input.length - header,
@@ -24,16 +24,15 @@ export const decompressBLZ = (input: Buffer, maxSize = 0x10000000): Buffer => {
     const flags = input[--src];
     for (let bit = 128; bit && src > prefix; bit >>= 1) {
       if (!(flags & bit)) {
-        if (dst <= prefix) throw new Error('BLZ output overflow');
+        if (dst <= prefix) throw new Error("BLZ output overflow");
         out[--dst] = input[--src];
       } else {
-        if (src - 2 < prefix) throw new Error('Truncated BLZ reference');
+        if (src - 2 < prefix) throw new Error("Truncated BLZ reference");
         const high = input[--src],
           low = input[--src];
         const count = (high >>> 4) + 3,
           offset = (((high & 15) << 8) | low) + 3;
-        if (dst - count < prefix || dst - 1 + offset >= size)
-          throw new Error('Invalid BLZ reference');
+        if (dst - count < prefix || dst - 1 + offset >= size) throw new Error("Invalid BLZ reference");
         for (let j = 0; j < count; j++) {
           --dst;
           out[dst] = out[dst + offset];
@@ -41,12 +40,12 @@ export const decompressBLZ = (input: Buffer, maxSize = 0x10000000): Buffer => {
       }
     }
   }
-  if (dst !== prefix) throw new Error('BLZ decompressed size mismatch');
+  if (dst !== prefix) throw new Error("BLZ decompressed size mismatch");
   return out;
 };
 
 export const compressBLZ = (input: Buffer): Buffer => {
-  if (input.length > 0xffffff) throw new Error('BLZ input exceeds 24-bit format limit');
+  if (input.length > 0xffffff) throw new Error("BLZ input exceeds 24-bit format limit");
   const temp = Buffer.alloc(input.length);
   let src = input.length,
     dst = input.length;
@@ -131,31 +130,24 @@ export const compressBLZ = (input: Buffer): Buffer => {
   return out;
 };
 
-export const decompressArm9 = (
-  data: Buffer,
-  header: Arm9Header,
-): { compressed: boolean; data: Buffer } => {
-  if (data.length < 0x18) throw new Error('ARM9 data too short');
+export const decompressArm9 = (data: Buffer, header: Arm9Header): { compressed: boolean; data: Buffer } => {
+  if (data.length < 0x18) throw new Error("ARM9 data too short");
   const nitro = data.readUInt32LE(0xc) === 0xdec00621 ? 12 : 0;
   const init = header.reserved2.readUInt32LE(0) & 0x3fff;
   const ptr = init ? data.readUInt32LE(init + 0x14) : header.ARM9ramAddress + header.ARM9size;
-  const compressed =
-    ptr > header.ARM9ramAddress && ptr + nitro >= header.ARM9ramAddress + data.length;
+  const compressed = ptr > header.ARM9ramAddress && ptr + nitro >= header.ARM9ramAddress + data.length;
   return {
     compressed,
     data: compressed
-      ? Buffer.concat([
-          decompressBLZ(data.subarray(0, data.length - nitro)),
-          data.subarray(data.length - nitro),
-        ])
+      ? Buffer.concat([decompressBLZ(data.subarray(0, data.length - nitro)), data.subarray(data.length - nitro)])
       : Buffer.from(data),
   };
 };
 export const compressArm9 = (data: Buffer, header: Arm9Header, postSize = 0): Buffer => {
-  if (data.length < 0x4000) throw new Error('ARM9 secure area is truncated');
+  if (data.length < 0x4000) throw new Error("ARM9 secure area is truncated");
   const nitro = data.readUInt32LE(0xc) === 0xdec00621 ? 12 : 0;
   const packed = compressBLZ(data.subarray(0x4000, data.length - nitro));
-  if (!packed.length) throw new Error('ARM9 BLZ compression produced no smaller representation');
+  if (!packed.length) throw new Error("ARM9 BLZ compression produced no smaller representation");
   const out = Buffer.concat([data.subarray(0, 0x4000), packed, data.subarray(data.length - nitro)]);
   const init = header.reserved2.readUInt32LE(0) & 0x3fff;
   if (init) out.writeUInt32LE(out.length - postSize + header.ARM9ramAddress, init + 0x14);
