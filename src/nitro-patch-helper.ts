@@ -2,6 +2,7 @@
 import { hashDigest, readFile } from "#nitro-runtime";
 
 import { bytes } from "./nitro/binary";
+import { OverlayTable } from "./nitro/filesystem";
 import { NDSFile } from "./nitro/nds-file";
 import type { DsiVerification } from "./nitro/twl-complete";
 import { decodeXdelta } from "./patch/xdelta";
@@ -190,19 +191,45 @@ export const patchBuffer = (original: Uint8Array, patch: Uint8Array, options: Pa
     if (replacement) rom.replaceFile(path, replacement);
   }
   if (formatVersion === 2) {
+    for (const name of ["overarm9.bin", "overarm7.bin"])
+      if (!rom.hasFile(name)) {
+        const delta = patches.get(`xdelta/${name}`);
+        const replacement = delta ? decodeXdelta(Buffer.alloc(0), delta, options) : patches.get(name);
+        if (replacement) rom.replaceFile(name, replacement);
+      }
     const candidates = new Map<string, { path: string; data: Buffer; delta: boolean }>();
     for (const [name, entry] of entries) {
       const delta = name.startsWith("xdelta/");
       const target = delta ? name.slice(7) : name;
-      if (!target.startsWith("data/") || rom.hasFile(target)) continue;
+      if ((!target.startsWith("data/") && !target.startsWith("overlay/")) || rom.hasFile(target)) continue;
       if (!delta && entries.has(`xdelta/${target}`)) continue;
       candidates.set(target, { path: delta ? entry.path.slice(7) : entry.path, data: entry.data, delta });
     }
     if (candidates.size && (patches.has("fnt.bin") || patches.has("xdelta/fnt.bin")))
       throw new Error("Adding files conflicts with an fnt.bin replacement");
+    const overlayTables = new Map<string, OverlayTable>();
+    for (const name of ["overarm9.bin", "overarm7.bin"])
+      if (rom.hasFile(name)) {
+        const raw = rom.getFile(name);
+        overlayTables.set(name, new OverlayTable(raw, 0, raw.length, name === "overarm9.bin"));
+      }
     const additions = [...candidates.values()].sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
-    for (const entry of additions)
-      rom.addFile(entry.path, entry.delta ? decodeXdelta(Buffer.alloc(0), entry.data, options) : entry.data);
+    for (const entry of additions) {
+      const content = entry.delta ? decodeXdelta(Buffer.alloc(0), entry.data, options) : entry.data;
+      if (entry.path.toLowerCase().startsWith("overlay/")) {
+        const match = /^overlay\/overlay(7)?_(\d{4,})\.bin$/i.exec(entry.path);
+        const overlayId = match?.[2];
+        const arm9 = !match?.[1];
+        if (!overlayId || String(Number(overlayId)).padStart(4, "0") !== overlayId)
+          throw new Error(`Invalid overlay path: ${entry.path}`);
+        const name = arm9 ? "overarm9.bin" : "overarm7.bin";
+        const table = overlayTables.get(name);
+        if (!table) throw new Error(`New overlay requires ${name}: ${entry.path}`);
+        const metadata = table.entries.find((item) => item.overlayId === Number(overlayId));
+        if (!metadata) throw new Error(`New overlay is missing its table entry: ${entry.path}`);
+        rom.addOverlay(arm9, metadata, content);
+      } else rom.addFile(entry.path, content);
+    }
   }
   const buffer = rom.toBuffer();
   return {

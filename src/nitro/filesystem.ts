@@ -140,11 +140,20 @@ export class FileNameTable {
     visit(this.root.folders[0], 0xf000);
     const namedIds = new Set(named.filter((file) => file.id >= 0).map((file) => file.id));
     const overlayIds = new Set(overlays.map((file) => file.id));
-    const unnamed = fat.entries.filter((entry) => !namedIds.has(entry.id));
+    const unnamed = fat.entries
+      .filter((entry) => !namedIds.has(entry.id))
+      .map((entry) => ({ ...entry, name: `FAT entry ${entry.id}` }));
     const files: NitroFile[] = [
       ...unnamed.filter((entry) => overlayIds.has(entry.id)),
+      ...overlays
+        .filter((file) => file.id < 0)
+        .sort(
+          (a, b) =>
+            Number(a.name.startsWith("overlay7_")) - Number(b.name.startsWith("overlay7_")) ||
+            Number(a.name.slice(a.name.indexOf("_") + 1, -4)) - Number(b.name.slice(b.name.indexOf("_") + 1, -4)),
+        ),
       ...unnamed.filter((entry) => !overlayIds.has(entry.id)),
-    ].map((entry) => ({ ...entry, name: `FAT entry ${entry.id}` }));
+    ];
     const firstNamed = files.length;
     files.push(...named);
     if (files.length > 0xf000) throw new Error("Filesystem file IDs exceed 0xEFFF");

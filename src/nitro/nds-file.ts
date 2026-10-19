@@ -6,7 +6,7 @@ import { BinaryWriter, DEFAULT_MAX_SIZE, bytes, range } from "./binary";
 import { crc16 } from "./crc";
 import { decryptSecureArea, encryptSecureArea } from "./crypto";
 import { FileAllocationTable, FileNameTable, OverlayTable, encodeName } from "./filesystem";
-import type { NitroFile, NitroFolder } from "./filesystem";
+import type { NitroFile, NitroFolder, OverlayItem } from "./filesystem";
 import { Header } from "./header";
 import { TWL } from "./twl";
 import { noDsiVerification } from "./twl-complete";
@@ -44,6 +44,7 @@ export class NDSFile {
   readonly warnings: string[] = [];
   private readonly paths = new Map<string, { path: string; file: NitroFile }>();
   private readonly maxOutputSize: number;
+  private readonly addedOverlays = new Map<string, { arm9: boolean; entry: OverlayItem }>();
   private structureChanged = false;
 
   constructor(input: Uint8Array, options: RomOptions = {}) {
@@ -162,7 +163,9 @@ export class NDSFile {
       size:
         this.twl?.complete && (path === "arm9i.bin" || path === "arm7i.bin")
           ? this.twl.complete.getProgram(path === "arm9i.bin" ? "arm9i" : "arm7i").length
-          : (file.replacement?.length ?? file.size),
+          : this.addedOverlays.size && (path === "overarm9.bin" || path === "overarm7.bin")
+            ? this.readOverlayTable(path === "overarm9.bin").entries.length * 32
+            : (file.replacement?.length ?? file.size),
     }));
   }
   hasFile(path: string): boolean {
@@ -175,7 +178,16 @@ export class NDSFile {
   }
   /** Replace an existing file. */
   replaceFile(path: string, content: Uint8Array): void {
-    const entry = this.paths.get(key(path));
+    let entry = this.paths.get(key(path));
+    if (!entry && (key(path) === "overarm9.bin" || key(path) === "overarm7.bin")) {
+      if (content.byteLength > this.maxOutputSize) throw new RangeError("Replacement exceeds output size limit");
+      new OverlayTable(content, 0, content.byteLength, key(path) === "overarm9.bin");
+      const file: NitroFile = { name: key(path), id: 0xffff, offset: 0, size: 0 };
+      entry = { path: file.name, file };
+      this.root.files.push(file);
+      this.paths.set(file.name, entry);
+      this.structureChanged = true;
+    }
     if (!entry) throw new Error(`ROM file not found: ${path}`);
     if (this.twl?.complete && content.byteLength > this.maxOutputSize)
       throw new RangeError("Replacement exceeds output size limit");
@@ -230,9 +242,53 @@ export class NDSFile {
     }
     this.structureChanged = true;
   }
+  /** Add an overlay; file IDs are assigned when the ROM is serialized. */
+  addOverlay(arm9: boolean, metadata: Omit<OverlayItem, "fileId">, content: Uint8Array): void {
+    const path = `overlay/overlay${arm9 ? "" : "7"}_${String(metadata.overlayId).padStart(4, "0")}.bin`;
+    if (!Number.isSafeInteger(metadata.overlayId) || metadata.overlayId < 0 || metadata.overlayId >= 0xffffffff)
+      throw new RangeError("Invalid overlay ID");
+    if (this.hasFile(path)) throw new Error(`ROM file already exists: ${path}`);
+    if (content.byteLength > this.maxOutputSize) throw new RangeError("Overlay exceeds output size limit");
+    const entry: OverlayItem = { ...metadata, fileId: 0 };
+    const table = new OverlayTable(Buffer.alloc(0), 0, 0, arm9);
+    table.entries.push(entry);
+    table.toBuffer();
+    const replacement = Buffer.from(bytes(content));
+    const file: NitroFile = { name: path.slice(8), id: -1, offset: -1, size: replacement.length, replacement };
+    const tableName = arm9 ? "overarm9.bin" : "overarm7.bin";
+    if (!this.hasFile(tableName)) this.replaceFile(tableName, Buffer.alloc(0));
+    this.overlay.files.push(file);
+    this.paths.set(path, { path, file });
+    this.addedOverlays.set(path, { arm9, entry });
+    this.structureChanged = true;
+  }
+  private readOverlayTable(arm9: boolean): OverlayTable {
+    const original = arm9 ? this.overlay9Table : this.overlay7Table;
+    const replacement = this.paths.get(arm9 ? "overarm9.bin" : "overarm7.bin")?.file.replacement;
+    const raw = replacement ?? original.toBuffer();
+    const table = new OverlayTable(raw, 0, raw.length, arm9);
+    for (const { arm9: target, entry } of this.addedOverlays.values()) {
+      if (target !== arm9) continue;
+      const existing = table.entries.find((item) => item.overlayId === entry.overlayId);
+      if (existing) Object.assign(existing, entry);
+      else table.entries.push({ ...entry });
+    }
+    const ids = new Set<number>();
+    for (const entry of table.entries) {
+      if (ids.has(entry.overlayId)) throw new Error(`Duplicate overlay ID: ${entry.overlayId}`);
+      ids.add(entry.overlayId);
+      const path = `overlay/overlay${arm9 ? "" : "7"}_${String(entry.overlayId).padStart(4, "0")}.bin`;
+      if (!this.hasFile(path)) throw new Error(`Overlay table entry has no payload: ${path}`);
+    }
+    if (original.entries.some((entry) => !ids.has(entry.overlayId)))
+      throw new Error("Removing overlays is unsupported");
+    return table;
+  }
   private fileBytes(file: NitroFile): Buffer {
     if (this.twl?.complete && (file.name === "arm9i.bin" || file.name === "arm7i.bin"))
       return this.twl.complete.getProgram(file.name === "arm9i.bin" ? "arm9i" : "arm7i");
+    if (this.addedOverlays.size && (file.name === "overarm9.bin" || file.name === "overarm7.bin"))
+      return this.readOverlayTable(file.name === "overarm9.bin").toBuffer();
     return file.replacement ?? range(this.original, file.offset, file.size, file.name);
   }
 
@@ -302,27 +358,23 @@ export class NDSFile {
     };
     const overlayIds = new Set<number>();
     const writeOverlays = (arm9: boolean): void => {
-      const originalTable = arm9 ? this.overlay9Table : this.overlay7Table;
       const name = arm9 ? "overarm9.bin" : "overarm7.bin";
       const entry = this.root.files.find((file) => file.name === name);
       if (!entry) return;
-      const raw = entry.replacement ?? originalTable.toBuffer();
-      const table = new OverlayTable(raw, 0, raw.length, arm9);
+      const table = this.readOverlayTable(arm9);
       const files = this.overlay.files
         .filter((file) => file.name.startsWith(arm9 ? "overlay_" : "overlay7_"))
-        .sort((a, b) => a.id - b.id);
+        .sort((a, b) => (a.id < 0 ? (b.id < 0 ? 0 : 1) : b.id < 0 ? -1 : a.id - b.id));
       for (const file of files) {
-        const item = table.entries.find((item) => item.fileId === file.id);
-        if (!item) throw new Error(`Replacement overlay table is missing file id ${file.id}`);
-        const size = this.fileBytes(layout ? overlayFiles.get(file.id)! : file).length;
-        for (const matching of layout ? table.entries.filter((item) => item.fileId === file.id) : [item]) {
-          if ((matching.reserved >>> 24) & 1 || (!arm9 && matching.reserved > 0))
-            matching.reserved = ((matching.reserved & 0xff000000) | (size & 0xffffff)) >>> 0;
-        }
+        const item = table.entries.find(
+          (item) => file.name === `overlay${arm9 ? "" : "7"}_${String(item.overlayId).padStart(4, "0")}.bin`,
+        )!;
+        const size = this.fileBytes(layout && file.id >= 0 ? overlayFiles.get(file.id)! : file).length;
+        if ((item.reserved >>> 24) & 1 || (!arm9 && item.reserved > 0))
+          item.reserved = ((item.reserved & 0xff000000) | (size & 0xffffff)) >>> 0;
+        item.fileId = layout ? (file.id >= 0 ? layout.sourceIds.get(file.id)! : layout.ids.get(file)!) : file.id;
         overlayIds.add(file.id);
       }
-      if (table.entries.length !== files.length) throw new Error("Changing overlay file count is unsupported");
-      if (layout) for (const item of table.entries) item.fileId = layout.sourceIds.get(item.fileId)!;
       const encoded = table.toBuffer();
       if (arm9) {
         h.ARM9overlayOffset = writer.position;
@@ -463,12 +515,15 @@ export class NDSFile {
     if (arm9File.replacement) h.nitrocode = arm9.length >= 12 && arm9.readUInt32LE(arm9.length - 12) === 0xdec00621;
     if (h.gameCode !== twl.header.gameCode && arm9.readBigUInt64LE(0) !== 0xe7ffdeffe7ffdeffn)
       arm9 = encryptSecureArea(h.gameCode, decryptSecureArea(twl.header.gameCode, arm9));
-    const signedOverlays = this.overlay9Table.entries.filter((entry) => entry.reserved & 0x2000000);
-    arm9 = twl.updateOverlays9Sha1Hmac(
-      arm9,
-      h,
-      signedOverlays.map((entry) => this.fileBytes(this.overlay.files.find((file) => file.id === entry.fileId)!)),
-    );
+    const signedOverlays = this.readOverlayTable(true).entries.filter((entry) => entry.reserved & 0x2000000);
+    if (signedOverlays.length !== twl.Overlays9Sha1Hmac.length) {
+      if (!arm9File.replacement) throw new Error("Changing signed overlay count requires an ARM9 replacement");
+    } else
+      arm9 = twl.updateOverlays9Sha1Hmac(
+        arm9,
+        h,
+        signedOverlays.map((entry) => this.getFile(`overlay/overlay_${String(entry.overlayId).padStart(4, "0")}.bin`)),
+      );
     h.ARM9size = arm9.length - (h.nitrocode ? 12 : 0);
     h.decrypted = arm9.length >= 8 && arm9.readBigUInt64LE(0) === 0xe7ffdeffe7ffdeffn;
     const plainArm9 = h.decrypted ? Buffer.from(arm9) : decryptSecureArea(h.gameCode, arm9);
@@ -488,7 +543,7 @@ export class NDSFile {
       const id = layout ? (file.id >= 0 ? layout.sourceIds.get(file.id)! : layout.ids.get(file)!) : file.id;
       if (written.has(id)) return;
       written.add(id);
-      const overlay = this.overlay.files.find((overlay) => overlay.id === file.id);
+      const overlay = file.id >= 0 ? this.overlay.files.find((overlay) => overlay.id === file.id) : undefined;
       if (overlay) file = overlay;
       const data = this.fileBytes(file);
       add(file.name, file, data, (start) => {
@@ -499,30 +554,34 @@ export class NDSFile {
     const overlays = (arm9: boolean): void => {
       const name = arm9 ? "overarm9.bin" : "overarm7.bin";
       if (!this.hasFile(name)) return;
-      const source = arm9 ? this.overlay9Table : this.overlay7Table;
       const file = system(name);
-      const data = file.replacement ?? source.toBuffer();
-      const table = new OverlayTable(data, 0, data.length, arm9);
-      if (table.entries.length !== source.entries.length) throw new Error("Changing overlay file count is unsupported");
+      const table = this.readOverlayTable(arm9);
       for (const entry of table.entries) {
-        const original = source.entries.find((item) => item.overlayId === entry.overlayId);
-        if (original?.fileId !== entry.fileId) throw new Error("Replacement overlay table changes its file references");
-        const payload = this.overlay.files.find((item) => item.id === entry.fileId)!;
+        const payload = this.paths.get(
+          `overlay/overlay${arm9 ? "" : "7"}_${String(entry.overlayId).padStart(4, "0")}.bin`,
+        )!.file;
         const size = this.fileBytes(payload).length;
         if ((entry.reserved >>> 24) & 1 || (!arm9 && entry.reserved > 0))
           entry.reserved = ((entry.reserved & 0xff000000) | size) >>> 0;
-        if (layout) entry.fileId = layout.sourceIds.get(entry.fileId)!;
+        entry.fileId = layout
+          ? payload.id >= 0
+            ? layout.sourceIds.get(payload.id)!
+            : layout.ids.get(payload)!
+          : payload.id;
       }
       add(name, file, table.toBuffer(), (start) => {
         if (arm9) {
           h.ARM9overlayOffset = start;
-          h.ARM9overlaySize = data.length;
+          h.ARM9overlaySize = table.entries.length * 32;
         } else {
           h.ARM7overlayOffset = start;
-          h.ARM7overlaySize = data.length;
+          h.ARM7overlaySize = table.entries.length * 32;
         }
       });
-      for (const entry of source.entries) addPayload(this.overlay.files.find((file) => file.id === entry.fileId)!);
+      for (const entry of table.entries)
+        addPayload(
+          this.paths.get(`overlay/overlay${arm9 ? "" : "7"}_${String(entry.overlayId).padStart(4, "0")}.bin`)!.file,
+        );
     };
     overlays(true);
     const arm7 = system("arm7.bin");
