@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 
-import { createRom, makeZip } from "./fixtures";
+import { createRom, literalXdelta, makeZip } from "./fixtures";
 
 test("reads and validates patch metadata field by field", async () => {
   const { readPatchMetadata } = await import("../src/nitro-patch-helper");
@@ -165,4 +165,124 @@ test("output allocation and ZIP expansion limits apply across the patch pipeline
     /limit|size/i,
   );
   assert.throws(() => patchBuffer(createRom(), makeZip({}), { maxOutputSize: 1024 }), /limit/i);
+});
+
+test("XZP format versions are validated before ROM parsing and preprocessing", async () => {
+  const { patchBuffer, readPatchMetadata, readPatchInfo } = await import("../src/nitro-patch-helper");
+  const input = createRom();
+  const digest = createHash("md5").update(input).digest("hex");
+  for (const formatVersion of [0, -1, 1.5, null, true, "2", Number.MAX_SAFE_INTEGER + 1, 3]) {
+    const archive = makeZip({
+      "metadata.json": JSON.stringify({ formatVersion }),
+      [`preprocessing/${digest}.xdelta`]: "invalid delta",
+    });
+    const error = formatVersion === 3 ? /Unsupported XZP format version/ : /formatVersion/;
+    assert.throws(() => patchBuffer(input, archive), error);
+    assert.throws(() => patchBuffer(Buffer.alloc(0), archive), error);
+    assert.throws(() => readPatchMetadata(archive), error);
+    assert.throws(() => readPatchInfo(archive), error);
+  }
+  for (const formatVersion of [1, 2])
+    assert.deepEqual(readPatchMetadata(makeZip({ "metadata.json": JSON.stringify({ formatVersion }) })), {
+      formatVersion,
+    });
+});
+
+test("missing or damaged metadata uses format 1 and content-only format 2 preserves legacy bytes", async () => {
+  const { patchBuffer } = await import("../src/nitro-patch-helper");
+  const input = createRom({ overlay: true });
+  const entries = { "data/hello.txt": "changed", "data/new.bin": "ignored" };
+  const legacy = patchBuffer(input, makeZip(entries)).buffer;
+  for (const metadata of ["{}", '{"formatVersion":1}', "{", Buffer.from([0xff]), "null", "[]", "2"])
+    assert.deepEqual(patchBuffer(input, makeZip({ ...entries, "metadata.json": metadata })).buffer, legacy);
+  const contents = { "data/hello.txt": "changed" };
+  assert.deepEqual(
+    patchBuffer(input, makeZip({ ...contents, "metadata.json": '{"formatVersion":2}' })).buffer,
+    patchBuffer(input, makeZip(contents)).buffer,
+  );
+});
+
+test("format 2 adds full files and empty-source deltas with deterministic names and priority", async () => {
+  const { patchBuffer } = await import("../src/nitro-patch-helper");
+  const { NDSFile } = await import("../src/nitro-helper");
+  const additions = [
+    ["metadata.json", '{"formatVersion":2}'],
+    ["data/SUB/Extra.bin", "extra"],
+    ["data/New/Empty.bin", ""],
+    ["data/new/Other.bin", "other"],
+    ["data/Delta.txt", "direct"],
+    ["xdelta/data/DELTA.txt", Buffer.from("d6c3c40000000b050005010048656c6c6f06", "hex")],
+    ["data/日本語/名前.bin", "Japanese"],
+    ["unused/extra.bin", "ignored"],
+    ["data/EmptyDirectory/", ""],
+  ] as const;
+  const input = createRom();
+  const result = patchBuffer(input, makeZip(additions));
+  assert.deepEqual(result.buffer, patchBuffer(input, makeZip([...additions].reverse())).buffer);
+  const rom = new NDSFile(result.buffer);
+  assert.equal(rom.getFile("data/sub/extra.bin").toString(), "extra");
+  assert.equal(rom.getFile("data/new/empty.bin").length, 0);
+  assert.equal(rom.getFile("data/new/other.bin").toString(), "other");
+  assert.equal(rom.getFile("data/delta.txt").toString(), "Hello");
+  assert.equal(rom.getFile("data/日本語/名前.bin").toString(), "Japanese");
+  const paths = rom.listFiles().map((entry) => entry.path);
+  assert.ok(paths.includes("data/DELTA.txt"));
+  assert.ok(paths.includes("data/sub/Extra.bin"));
+  assert.ok(paths.includes("data/New/Other.bin"));
+  assert.equal(
+    rom.data.folders.some((folder) => folder.name === "EmptyDirectory"),
+    false,
+  );
+  assert.deepEqual(rom.getFile("data/hello.txt"), new NDSFile(input).getFile("data/hello.txt"));
+});
+
+test("format 2 rejects missing delta sources, invalid paths and FNT conflicts", async () => {
+  const { patchBuffer } = await import("../src/nitro-patch-helper");
+  const { NDSFile } = await import("../src/nitro-helper");
+  const input = createRom();
+  const metadata = { "metadata.json": '{"formatVersion":2}' };
+  for (const path of ["data/../file", "data//file", "data/hello.txt/file", "data/sub", "data/😀.bin"])
+    assert.throws(() => patchBuffer(input, makeZip({ ...metadata, [path]: "new" })), /path|Shift_JIS/i);
+  const sourceCopy = Buffer.from([0xd6, 0xc3, 0xc4, 0, 0, 1, 1, 0, 8, 1, 0, 0, 2, 1, 19, 1, 0]);
+  assert.throws(() => patchBuffer(input, makeZip({ ...metadata, "xdelta/data/new.bin": sourceCopy })), /source|range/i);
+  const fnt = new NDSFile(input).getFile("fnt.bin");
+  for (const path of ["fnt.bin", "xdelta/fnt.bin"])
+    assert.throws(
+      () =>
+        patchBuffer(
+          input,
+          makeZip({
+            ...metadata,
+            [path]: path.startsWith("xdelta/") ? literalXdelta(fnt) : fnt,
+            "data/new.bin": "new",
+          }),
+        ),
+      /conflict/i,
+    );
+  const output = patchBuffer(input, makeZip({ ...metadata, "fnt.bin": fnt })).buffer;
+  assert.deepEqual(new NDSFile(output).getFile("fnt.bin"), fnt);
+});
+
+test("format 2 determines additions after preprocessing and uses the final duplicate spelling", async () => {
+  const { patchBuffer } = await import("../src/nitro-patch-helper");
+  const { NDSFile } = await import("../src/nitro-helper");
+  const input = createRom();
+  const prepared = new NDSFile(input);
+  prepared.addFile("data/Prepared.bin", Buffer.from("before"));
+  const digest = createHash("md5").update(input).digest("hex");
+  const result = patchBuffer(
+    input,
+    makeZip([
+      ["metadata.json", '{"formatVersion":2}'],
+      [`preprocessing/${digest}.xdelta`, literalXdelta(prepared.toBuffer())],
+      ["data/PREPARED.bin", "replaced"],
+      ["data/New.BIN", "first"],
+      ["data/NEW.bin", "last"],
+    ]),
+  );
+  const rom = new NDSFile(result.buffer);
+  assert.equal(rom.getFile("data/prepared.bin").toString(), "replaced");
+  assert.equal(rom.getFile("data/new.bin").toString(), "last");
+  assert.ok(rom.listFiles().some(({ path }) => path === "data/NEW.bin"));
+  assert.ok(rom.listFiles().some(({ path }) => path === "data/Prepared.bin"));
 });

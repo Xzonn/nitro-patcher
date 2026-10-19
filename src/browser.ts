@@ -8,6 +8,7 @@ import {
 } from "./nitro-patch-helper";
 
 export interface PatchMetadata {
+  formatVersion?: number;
   id?: string;
   author?: string;
   name?: string;

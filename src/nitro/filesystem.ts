@@ -1,9 +1,12 @@
 // Based on NitroHelper FNT/FAT/OverlayTable, GPL-3.0.
-import { bytes, range } from "./binary";
+import iconv from "iconv-lite";
 
-/** A file in the original ROM, optionally replaced with new bytes. */
+import { BinaryWriter, bytes, range } from "./binary";
+
+/** Original IDs/offsets describe the input ROM; newly added files use -1 until serialized and reopened. */
 export interface NitroFile {
   name: string;
+  nameBytes?: Buffer;
   id: number;
   offset: number;
   size: number;
@@ -12,9 +15,25 @@ export interface NitroFile {
 
 export interface NitroFolder {
   name: string;
+  nameBytes?: Buffer;
   id: number;
   files: NitroFile[];
   folders: NitroFolder[];
+}
+
+export const encodeName = (name: string): Buffer => {
+  const encoded = iconv.encode(name, "shift_jis");
+  if (new TextDecoder("shift_jis").decode(encoded) !== name)
+    throw new Error(`FNT name cannot be represented in Shift_JIS: ${name}`);
+  if (!encoded.length || encoded.length > 127) throw new Error("FNT name must contain 1 to 127 encoded bytes");
+  return encoded;
+};
+
+export interface FileSystemLayout {
+  fnt: Buffer;
+  files: NitroFile[];
+  ids: Map<NitroFile, number>;
+  sourceIds: Map<number, number>;
 }
 
 export interface FatEntry {
@@ -72,7 +91,8 @@ export class FileNameTable {
         if (!tag) break;
         const length = tag & 0x7f;
         if (!length) throw new Error("Empty FNT directory name");
-        const filename = decoder.decode(range(table, cursor, length, "FNT filename"));
+        const nameBytes = Buffer.from(range(table, cursor, length, "FNT filename"));
+        const filename = decoder.decode(nameBytes);
         cursor += length;
         if (
           filename.includes("/") ||
@@ -89,18 +109,72 @@ export class FileNameTable {
           const id = range(table, cursor, 2, "FNT directory id").readUInt16LE();
           cursor += 2;
           if (id < 0xf000) throw new Error("Invalid FNT directory id");
-          folder.folders.push(parse(id & 0xfff, filename, depth + 1));
+          const child = parse(id & 0xfff, filename, depth + 1);
+          child.nameBytes = nameBytes;
+          folder.folders.push(child);
         } else {
           const entry = fat.entries[fileId++];
           if (!entry) throw new Error("FNT file id is outside FAT");
           if (fileIds.has(entry.id)) throw new Error(`Duplicate FNT file id: ${entry.id}`);
           fileIds.add(entry.id);
-          folder.files.push({ name: filename, ...entry });
+          folder.files.push({ name: filename, nameBytes, ...entry });
         }
       }
       return folder;
     };
     this.root = { name: "root", id: 0xffff, files: [], folders: [parse(0, "data", 0)] };
+  }
+
+  serialize(fat: FileAllocationTable, overlays: NitroFile[]): FileSystemLayout {
+    const directories: { folder: NitroFolder; parent: number; firstId: number }[] = [];
+    const named: NitroFile[] = [];
+    const sort = <T extends NitroFile | NitroFolder>(items: T[]): T[] =>
+      [...items].sort((a, b) => Buffer.compare(a.nameBytes ?? encodeName(a.name), b.nameBytes ?? encodeName(b.name)));
+    const visit = (folder: NitroFolder, parent: number): void => {
+      const index = directories.length;
+      directories.push({ folder, parent, firstId: named.length });
+      if (directories.length > 4096) throw new Error("FNT directory count exceeds 4096");
+      named.push(...sort(folder.files));
+      for (const child of sort(folder.folders)) visit(child, 0xf000 + index);
+    };
+    visit(this.root.folders[0], 0xf000);
+    const namedIds = new Set(named.filter((file) => file.id >= 0).map((file) => file.id));
+    const overlayIds = new Set(overlays.map((file) => file.id));
+    const unnamed = fat.entries.filter((entry) => !namedIds.has(entry.id));
+    const files: NitroFile[] = [
+      ...unnamed.filter((entry) => overlayIds.has(entry.id)),
+      ...unnamed.filter((entry) => !overlayIds.has(entry.id)),
+    ].map((entry) => ({ ...entry, name: `FAT entry ${entry.id}` }));
+    const firstNamed = files.length;
+    files.push(...named);
+    if (files.length > 0xf000) throw new Error("Filesystem file IDs exceed 0xEFFF");
+    const ids = new Map(files.map((file, id) => [file, id]));
+    const sourceIds = new Map(files.filter((file) => file.id >= 0).map((file) => [file.id, ids.get(file)!]));
+    const directoryIds = new Map(directories.map(({ folder }, index) => [folder, 0xf000 + index]));
+    const writer = new BinaryWriter();
+    writer.write(Buffer.alloc(directories.length * 8));
+    for (const [index, { folder, parent, firstId }] of directories.entries()) {
+      const record = Buffer.alloc(8);
+      record.writeUInt32LE(writer.position);
+      record.writeUInt16LE(firstNamed + firstId, 4);
+      record.writeUInt16LE(index === 0 ? directories.length : parent, 6);
+      record.copy(writer.buffer, index * 8);
+      for (const file of sort(folder.files)) {
+        const name = file.nameBytes ?? encodeName(file.name);
+        writer.write(Buffer.from([name.length]));
+        writer.write(name);
+      }
+      for (const child of sort(folder.folders)) {
+        const name = child.nameBytes ?? encodeName(child.name);
+        writer.write(Buffer.from([0x80 | name.length]));
+        writer.write(name);
+        const id = Buffer.alloc(2);
+        id.writeUInt16LE(directoryIds.get(child)!);
+        writer.write(id);
+      }
+      writer.write(Buffer.from([0]));
+    }
+    return { fnt: writer.toBuffer(), files, ids, sourceIds };
   }
 
   static findFile(id: number, folder: NitroFolder): NitroFile | undefined {

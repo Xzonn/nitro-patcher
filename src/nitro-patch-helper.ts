@@ -4,7 +4,7 @@ import { hashDigest, readFile } from "#nitro-runtime";
 import { bytes } from "./nitro/binary";
 import { NDSFile } from "./nitro/nds-file";
 import { decodeXdelta } from "./patch/xdelta";
-import { extractZipEntry as extractEntry, readZip } from "./patch/zip";
+import { extractZipEntry as extractEntry, readZip, readZipEntries } from "./patch/zip";
 
 export const PatchReturnValue = Object.freeze({
   SUCCESS: "SUCCESS",
@@ -33,6 +33,7 @@ export interface PatchOptions {
 }
 
 export interface PatchMetadata {
+  formatVersion?: number;
   id?: string;
   author?: string;
   name?: string;
@@ -77,6 +78,13 @@ const readMetadata = (files: Map<string, Buffer>): PatchMetadata | null => {
 
   const value = metadata as Record<string, unknown>;
   const result: PatchMetadata = {};
+  if (value.formatVersion !== undefined) {
+    const version = value.formatVersion;
+    if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1)
+      throw new Error("metadata.json formatVersion must be a positive safe integer");
+    if (version !== 1 && version !== 2) throw new Error(`Unsupported XZP format version: ${version}`);
+    result.formatVersion = version;
+  }
   for (const field of ["id", "author", "name", "homepage", "version"] as const) {
     const fieldValue = value[field];
     if (fieldValue === undefined) continue;
@@ -146,7 +154,9 @@ export const readPatchInfoFile = async (patchPath: string, options: PatchOptions
 /** Apply an existing NitroPatcher ZIP package entirely in memory. */
 export const patchBuffer = (original: Uint8Array, patch: Uint8Array, options: PatchOptions = {}): PatchResult => {
   const input = bytes(original, "original ROM");
-  const patches = readZip(patch, options);
+  const entries = readZipEntries(patch, options);
+  const patches = new Map([...entries].map(([name, entry]) => [name, entry.data]));
+  const formatVersion = readMetadata(patches)?.formatVersion ?? 1;
   const inputMd5 = md5(input);
   const preprocessing = patches.get(`preprocessing/${inputMd5}.xdelta`);
   const rom = new NDSFile(preprocessing ? decodeXdelta(input, preprocessing, options) : input, options);
@@ -170,6 +180,21 @@ export const patchBuffer = (original: Uint8Array, patch: Uint8Array, options: Pa
     const delta = patches.get(`xdelta/${normalized}`);
     const replacement = delta ? decodeXdelta(rom.getFile(path), delta, options) : patches.get(normalized);
     if (replacement) rom.replaceFile(path, replacement);
+  }
+  if (formatVersion === 2) {
+    const candidates = new Map<string, { path: string; data: Buffer; delta: boolean }>();
+    for (const [name, entry] of entries) {
+      const delta = name.startsWith("xdelta/");
+      const target = delta ? name.slice(7) : name;
+      if (!target.startsWith("data/") || rom.hasFile(target)) continue;
+      if (!delta && entries.has(`xdelta/${target}`)) continue;
+      candidates.set(target, { path: delta ? entry.path.slice(7) : entry.path, data: entry.data, delta });
+    }
+    if (candidates.size && (patches.has("fnt.bin") || patches.has("xdelta/fnt.bin")))
+      throw new Error("Adding files conflicts with an fnt.bin replacement");
+    const additions = [...candidates.values()].sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
+    for (const entry of additions)
+      rom.addFile(entry.path, entry.delta ? decodeXdelta(Buffer.alloc(0), entry.data, options) : entry.data);
   }
   const buffer = rom.toBuffer();
   return {

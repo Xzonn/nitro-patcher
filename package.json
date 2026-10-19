@@ -76,6 +76,7 @@
     "globals": "16.5.0",
     "jiti": "2.7.0",
     "prettier": "3.9.6",
+    "string_decoder": "1.3.0",
     "tsup": "8.5.1",
     "tsx": "4.23.13",
     "type-fest": "4.41.0",
@@ -90,6 +91,7 @@
     "#browser-aes": "@noble/ciphers/aes.js"
   },
   "dependencies": {
+    "iconv-lite": "0.7.3",
     "markdansi": "0.3.3"
   }
 }

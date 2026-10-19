@@ -23,12 +23,26 @@ execFileSync(process.execPath, [resolve("node_modules/typescript/bin/tsc"), "-p"
 await copyFile("artifacts/browser-types/browser.d.ts", "dist/browser.d.ts");
 
 const require = createRequire(import.meta.url);
-for (const dependency of ["@noble/hashes", "@noble/ciphers", "fflate", "buffer"]) {
+for (const dependency of ["@noble/hashes", "@noble/ciphers", "fflate", "buffer", "iconv-lite", "string_decoder"]) {
   await appendFile(
     "dist/browser.js.LEGAL.txt",
     `\n\n${dependency}\n${await readFile(resolve("node_modules", dependency, "LICENSE"), "utf8")}`,
   );
 }
+const saferBuffer = dirname(
+  require.resolve("safer-buffer/package.json", { paths: [resolve("node_modules/iconv-lite")] }),
+);
+await appendFile(
+  "dist/browser.js.LEGAL.txt",
+  `\n\nsafer-buffer\n${await readFile(join(saferBuffer, "LICENSE"), "utf8")}`,
+);
+const safeBuffer = dirname(
+  require.resolve("safe-buffer/package.json", { paths: [resolve("node_modules/string_decoder")] }),
+);
+await appendFile(
+  "dist/browser.js.LEGAL.txt",
+  `\n\nsafe-buffer\n${await readFile(join(safeBuffer, "LICENSE"), "utf8")}`,
+);
 for (const dependency of ["base64-js", "ieee754"]) {
   const directory = dirname(require.resolve(`${dependency}/package.json`, { paths: [resolve("node_modules/buffer")] }));
   await appendFile(

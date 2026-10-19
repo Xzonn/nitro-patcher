@@ -65,6 +65,71 @@ test("growing a file past fixed DSi hash tables rejects serialization", () => {
   assert.throws(() => rom.toBuffer(), /overlap/i);
 });
 
+test("adding files preserves DSi payloads and recalculates digests within fixed regions", () => {
+  const rom = new NDSFile(createDsiRom());
+  rom.addFile("data/New.bin", Buffer.from("DSi addition"));
+  const serialized = rom.toBuffer();
+  const reread = new NDSFile(serialized);
+  assert.equal(reread.getFile("data/New.bin").toString(), "DSi addition");
+  assert.deepEqual(reread.twl!.DSi9Data, rom.twl!.DSi9Data);
+  assert.deepEqual(reread.twl!.DSi7Data, rom.twl!.DSi7Data);
+  const h = reread.header;
+  const sectors = serialized.subarray(h.sector_hashtable_start, h.sector_hashtable_start + h.sector_hashtable_size);
+  const blocks = serialized.subarray(h.block_hashtable_start, h.block_hashtable_start + h.block_hashtable_size);
+  assert.deepEqual(blocks, hmac(sectors));
+  assert.deepEqual(h.hmac_digest_master, hmac(blocks));
+  assert.deepEqual(sectors.subarray(0, 20), hmac(serialized.subarray(h.digest_ntr_start, h.digest_ntr_start + 0x400)));
+  assert.deepEqual(serialized, rom.toBuffer());
+  rom.addFile("data/Huge.bin", Buffer.alloc(0x10000));
+  assert.throws(() => rom.toBuffer(), /overlap/i);
+});
+
+test("added files update capacity and obey the output limit", () => {
+  const rom = new NDSFile(createRom());
+  rom.addFile("data/Large.bin", Buffer.alloc(0x20000, 0x55));
+  const output = rom.toBuffer();
+  const reread = new NDSFile(output);
+  assert.equal(output.length, 0x40000);
+  assert.equal(reread.header.size, 0x40000);
+  assert.equal(reread.header.headerCRC, true);
+  assert.deepEqual(reread.getFile("data/Large.bin"), Buffer.alloc(0x20000, 0x55));
+  const limited = new NDSFile(createRom(), { maxOutputSize: 0x20000 });
+  limited.addFile("data/Large.bin", Buffer.alloc(0x20000));
+  assert.throws(() => limited.toBuffer(), /limit/i);
+});
+
+test("new filesystem serialization enforces file ID and directory count bounds", () => {
+  const source = createRom();
+  const fatOffset = source.length;
+  const extended = Buffer.concat([source, Buffer.alloc(0xf000 * 8)]);
+  source.copy(extended, fatOffset, source.readUInt32LE(0x48), source.readUInt32LE(0x48) + 16);
+  extended.writeUInt32LE(fatOffset, 0x48);
+  extended.writeUInt32LE(0xefff * 8, 0x4c);
+  const rom = new NDSFile(extended);
+  rom.addFile("data/New.bin", Buffer.alloc(0));
+  const output = new NDSFile(rom.toBuffer());
+  assert.equal(output.fatTable.entries.length, 0xf000);
+  assert.equal(output.listFiles().find(({ path }) => path === "data/sub/item.bin")!.id, 0xefff);
+  rom.addFile("data/Another.bin", Buffer.alloc(0));
+  assert.throws(() => rom.toBuffer(), /0xEFFF/);
+  const directories = new NDSFile(createRom());
+  for (let index = 0; index < 4094; index++)
+    directories.data.folders.push({ name: `dir${index}`, id: -1, files: [], folders: [] });
+  directories.addFile("data/New.bin", Buffer.alloc(0));
+  const reread = new NDSFile(directories.toBuffer());
+  assert.equal(reread.getFile("fnt.bin").readUInt16LE(6), 4096);
+  assert.equal(reread.data.folders.length, 4095);
+  reread.addFile("data/dir0/Added.bin", Buffer.from("existing empty directory"));
+  assert.equal(new NDSFile(reread.toBuffer()).getFile("data/dir0/Added.bin").toString(), "existing empty directory");
+  directories.addFile("data/Extra/New.bin", Buffer.alloc(0));
+  assert.throws(() => directories.toBuffer(), /4096/);
+  const deep = new NDSFile(createRom());
+  const deepest = `data/${"directory/".repeat(256)}file.bin`;
+  deep.addFile(deepest, Buffer.alloc(0));
+  assert.equal(new NDSFile(deep.toBuffer()).getFile(deepest).length, 0);
+  assert.throws(() => deep.addFile(`data/${"directory/".repeat(257)}file.bin`, Buffer.alloc(0)), /depth/i);
+});
+
 test("header replacement changes title and code only, matching original helper", () => {
   const rom = new NDSFile(createRom());
   const replacement = rom.getFile("header.bin");

@@ -20,6 +20,22 @@ export type ZipEntries =
   | ReadonlyMap<string, FixtureBytes>
   | Iterable<readonly [string, FixtureBytes]>;
 
+/** Encode a literal-only VCDIFF window using the standard ADD instruction. */
+export const literalXdelta = (target: Uint8Array): Buffer => {
+  const vint = (value: number): number[] => {
+    const output = [value & 127];
+    while ((value = Math.floor(value / 128))) output.unshift((value & 127) | 128);
+    return output;
+  };
+  const instruction = Buffer.from([1, ...vint(target.length)]);
+  const body = Buffer.concat([
+    Buffer.from([...vint(target.length), 0, ...vint(target.length), ...vint(instruction.length), 0]),
+    target,
+    instruction,
+  ]);
+  return Buffer.concat([Buffer.from([0xd6, 0xc3, 0xc4, 0, 0, 0, ...vint(body.length)]), body]);
+};
+
 function bytes(value: FixtureBytes | undefined, fallback: FixtureBytes): Buffer {
   if (value === undefined) return Buffer.from(fallback);
   return Buffer.isBuffer(value) ? Buffer.from(value) : Buffer.from(value);

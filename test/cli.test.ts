@@ -195,3 +195,34 @@ test("CLI extracts the named ROM tree and inspects ROM metadata", async () => {
     await rm(folder, { recursive: true, force: true });
   }
 });
+
+test("CLI applies format 2 and rejects unknown formats before writing output", async () => {
+  const { NDSFile } = await import("../src/nitro-helper");
+  const folder = await mkdtemp(join(tmpdir(), "nitro-cli-format-"));
+  try {
+    const original = join(folder, "original.nds");
+    const patch = join(folder, "patch.xzp");
+    const output = join(folder, "output.nds");
+    await writeFile(original, createRom());
+    await writeFile(patch, makeZip({ "metadata.json": '{"formatVersion":2}', "data/日本語/New.bin": "added" }));
+    const result = run(["--json", original, patch, output]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(new NDSFile(await readFile(output)).getFile("data/日本語/New.bin").toString(), "added");
+    const metadata = JSON.parse(result.stdout) as { outputMd5: string; metadata: { formatVersion: number } };
+    assert.equal(metadata.metadata.formatVersion, 2);
+    const dryRun = run(["--json", "--dry-run", "-i", original, "-p", patch]);
+    assert.equal(dryRun.status, 0, dryRun.stderr);
+    assert.equal((JSON.parse(dryRun.stdout) as { outputMd5: string }).outputMd5, metadata.outputMd5);
+    await writeFile(patch, makeZip({ "metadata.json": '{"formatVersion":3}' }));
+    const previous = await readFile(output);
+    const failed = run([original, patch, output]);
+    assert.equal(failed.status, 1);
+    assert.match(failed.stderr, /Unsupported XZP/);
+    assert.deepEqual(await readFile(output), previous);
+    const missing = join(folder, "missing.nds");
+    assert.equal(run([original, patch, missing]).status, 1);
+    await assert.rejects(readFile(missing), { code: "ENOENT" });
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+});

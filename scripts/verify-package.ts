@@ -67,7 +67,9 @@ try {
     join(temporary, "patch.zip"),
     makeZip({
       "data/hello.txt": "after package patch\n",
+      "data/日本語/名前.bin": "installed addition",
       "metadata.json": JSON.stringify({
+        formatVersion: 2,
         id: "package-patch",
         author: "Example Team",
         name: "Package Patch",
@@ -101,6 +103,8 @@ assert.equal(PatchHelper, HelperPatchHelper);
 const source = readFileSync(new URL('./source.nds', import.meta.url));
 const archive = readFileSync(new URL('./patch.zip', import.meta.url));
 const metadata = readPatchMetadata(archive);
+const formatVersion: number | undefined = metadata?.formatVersion;
+assert.equal(formatVersion, 2);
 assert.equal(metadata?.id, 'package-patch');
 assert.equal(metadata?.name, 'Package Patch');
 assert.equal((await readPatchMetadataFile('./patch.zip'))?.isBeta, false);
@@ -119,6 +123,9 @@ assert.deepEqual(result.buffer, viaClass.buffer);
 const output: Buffer = result.buffer;
 const reopened = new NDSFile(output);
 assert.equal(reopened.getFile('data/hello.txt').toString(), 'after package patch\\n');
+assert.equal(reopened.getFile('data/日本語/名前.bin').toString(), 'installed addition');
+reopened.addFile('data/API.bin', Buffer.from('API addition'));
+assert.equal(new NDSFile(reopened.toBuffer()).getFile('data/API.bin').toString(), 'API addition');
 assert.deepEqual(reopened.getFile('data/sub/item.bin'), original.getFile('data/sub/item.bin'));
 const repacked: Buffer = reopened.toBuffer();
 assert.equal(new NDSFile(repacked).getFile('data/hello.txt').toString(), 'after package patch\\n');
@@ -175,6 +182,7 @@ export const check = (rom: Uint8Array, patch: Uint8Array): Blob => {
   const count: number = inspectRom(rom).fileCount;
   const code: string = NitroHelper.inspectRom(rom).gameCode;
   const patchName: string | undefined = readPatchMetadata(patch)?.name;
+  const formatVersion: number | undefined = readPatchMetadata(patch)?.formatVersion;
   const readmeContent: string | undefined = readPatchReadme(patch)?.content;
   const readmeFormat: 'markdown' | 'plaintext' | undefined = readPatchReadme(patch)?.format;
   const infoName: string | undefined = readPatchInfo(patch).metadata?.name;
@@ -186,7 +194,7 @@ export const check = (rom: Uint8Array, patch: Uint8Array): Blob => {
   patchBuffer('rom.nds', patch);
   // @ts-expect-error An unknown result state must be rejected.
   const invalid: typeof state = 'OTHER';
-  void invalid; void count; void code; void patchName; void readmeContent; void readmeFormat; void infoName;
+  void invalid; void count; void code; void patchName; void formatVersion; void readmeContent; void readmeFormat; void infoName;
   return new Blob([bytes]);
 };
 `,

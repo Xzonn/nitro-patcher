@@ -4,7 +4,7 @@ import { deflateRawSync } from "node:zlib";
 
 import { makeZip } from "./fixtures";
 import { crc32 } from "../src/nitro/crc";
-import { readZip } from "../src/patch/zip";
+import { readZip, readZipEntries } from "../src/patch/zip";
 
 interface EntryOptions {
   name?: Buffer;
@@ -79,6 +79,14 @@ test("stored archive matches PatchHelper path normalization and duplicate preced
   assert.deepEqual([...entries.keys()], ["dir/file.bin", "空/文件.txt"]);
   assert.equal(entries.get("dir/file.bin")?.toString(), "last");
   assert.equal(entries.get("空/文件.txt")?.toString(), "数据");
+  const details = readZipEntries(
+    makeZip([
+      ["DATA/Name.TXT", "first"],
+      ["Data/NAME.txt", "last"],
+    ]),
+  );
+  assert.equal(details.get("data/name.txt")?.path, "Data/NAME.txt");
+  assert.equal(details.get("data/name.txt")?.data.toString(), "last");
 });
 test("deflated entries support central-directory sizes and signed/unsigned data descriptors", () => {
   for (const options of [{}, { descriptor: true }, { descriptor: true, signedDescriptor: false }]) {

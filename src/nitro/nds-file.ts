@@ -5,7 +5,7 @@ import { Banner } from "./banner";
 import { BinaryWriter, DEFAULT_MAX_SIZE, bytes, range } from "./binary";
 import { crc16 } from "./crc";
 import { encryptSecureArea } from "./crypto";
-import { FileAllocationTable, FileNameTable, OverlayTable } from "./filesystem";
+import { FileAllocationTable, FileNameTable, OverlayTable, encodeName } from "./filesystem";
 import type { NitroFile, NitroFolder } from "./filesystem";
 import { Header } from "./header";
 import { TWL } from "./twl";
@@ -18,6 +18,7 @@ export interface RomOptions {
 export interface RomFileInfo {
   /** ROM-relative path, including data/, overlay/, or a system filename. */
   path: string;
+  /** Input ROM identity and position; both are -1 for an added file until the output is reopened. */
   id: number;
   offset: number;
   size: number;
@@ -39,6 +40,7 @@ export class NDSFile {
   readonly warnings: string[] = [];
   private readonly paths = new Map<string, { path: string; file: NitroFile }>();
   private readonly maxOutputSize: number;
+  private structureChanged = false;
 
   constructor(input: Uint8Array, options: RomOptions = {}) {
     this.original = bytes(input, "ROM");
@@ -114,11 +116,56 @@ export class NDSFile {
     if (!entry) throw new Error(`ROM file not found: ${path}`);
     return Buffer.from(this.fileBytes(entry.file));
   }
-  /** Replace an existing file. Adding or deleting filesystem entries is not supported. */
+  /** Replace an existing file. */
   replaceFile(path: string, content: Uint8Array): void {
     const entry = this.paths.get(key(path));
     if (!entry) throw new Error(`ROM file not found: ${path}`);
     entry.file.replacement = Buffer.from(bytes(content));
+  }
+  /** Add a NitroFS file and any missing parent directories. */
+  addFile(path: string, content: Uint8Array): void {
+    const components = path.replaceAll("\\", "/").split("/");
+    if (
+      components[0]?.toLowerCase() !== "data" ||
+      components.length < 2 ||
+      components.slice(1).some((name) => !name || name === "." || name === ".." || name.includes("\0"))
+    )
+      throw new Error(`Invalid NitroFS path: ${path}`);
+    if (components.length > 258) throw new Error("FNT directory depth exceeds 256");
+    if (this.hasFile(path)) throw new Error(`ROM file already exists: ${path}`);
+    const replacement = Buffer.from(bytes(content));
+    const names: { name: string; nameBytes?: Buffer }[] = components.slice(1).map((name) => ({ name }));
+    let existing: NitroFolder | undefined = this.data;
+    for (const [index, component] of names.entries()) {
+      const normalized = component.name.toLowerCase();
+      if (existing?.files.some((file) => file.name.toLowerCase() === normalized))
+        throw new Error(`ROM path conflicts with a file: ${path}`);
+      const child: NitroFolder | undefined = existing?.folders.find((child) => child.name.toLowerCase() === normalized);
+      if (index === names.length - 1 && child) throw new Error(`ROM path conflicts with a directory: ${path}`);
+      if (!child) component.nameBytes = encodeName(component.name);
+      existing = child;
+    }
+    let folder = this.data;
+    let prefix = "data";
+    for (const [index, component] of names.entries()) {
+      const normalized = component.name.toLowerCase();
+      const child = folder.folders.find((child) => child.name.toLowerCase() === normalized);
+      if (index === names.length - 1) {
+        const file: NitroFile = { ...component, id: -1, offset: -1, size: replacement.length, replacement };
+        folder.files.push(file);
+        const outputPath = `${prefix}/${file.name}`;
+        this.paths.set(key(outputPath), { path: outputPath, file });
+      } else {
+        if (child) folder = child;
+        else {
+          const created: NitroFolder = { ...component, id: -1, files: [], folders: [] };
+          folder.folders.push(created);
+          folder = created;
+        }
+        prefix += `/${folder.name}`;
+      }
+    }
+    this.structureChanged = true;
   }
   private fileBytes(file: NitroFile): Buffer {
     return file.replacement ?? range(this.original, file.offset, file.size, file.name);
@@ -127,6 +174,7 @@ export class NDSFile {
   /** Rebuild offsets, allocation table, CRCs and ROM padding. Safe to call repeatedly. */
   toBuffer(): Buffer {
     const fntReplacement = this.root.files.find((file) => file.name === "fnt.bin")?.replacement;
+    if (this.structureChanged && fntReplacement) throw new Error("Adding files conflicts with an fnt.bin replacement");
     if (fntReplacement) {
       const replacementTree = new FileNameTable(this.fatTable, fntReplacement, 0, fntReplacement.length);
       const collect = (folder: NitroFolder): number[] =>
@@ -134,6 +182,8 @@ export class NDSFile {
       if (collect(replacementTree.root).join(",") !== collect(this.data).join(","))
         throw new Error("Replacement FNT must preserve existing file IDs");
     }
+    const layout = this.structureChanged ? this.fntTable.serialize(this.fatTable, this.overlay.files) : undefined;
+    const overlayFiles = new Map(this.overlay.files.map((file) => [file.id, file]));
     const h = new Header(this.header.toBuffer());
     h.nitrocode = this.header.nitrocode;
     h.decrypted = this.header.decrypted;
@@ -153,9 +203,12 @@ export class NDSFile {
     }
     const placements = new Map<number, { start: number; end: number }>();
     const write = (file: NitroFile, padding = true): void => {
+      const id = layout ? (file.id >= 0 ? layout.sourceIds.get(file.id) : layout.ids.get(file)) : file.id;
+      if (layout && id !== undefined && placements.has(id)) return;
+      if (layout && file.id >= 0) file = overlayFiles.get(file.id) ?? file;
       const start = writer.position;
       writer.write(this.fileBytes(file));
-      if (file.id !== 0xffff) placements.set(file.id, { start, end: writer.position });
+      if (id !== undefined && id !== 0xffff) placements.set(id, { start, end: writer.position });
       if (padding) writer.pad(0x200);
     };
     const overlayIds = new Set<number>();
@@ -172,12 +225,15 @@ export class NDSFile {
       for (const file of files) {
         const item = table.entries.find((item) => item.fileId === file.id);
         if (!item) throw new Error(`Replacement overlay table is missing file id ${file.id}`);
-        const size = this.fileBytes(file).length;
-        if ((item.reserved >>> 24) & 1 || (!arm9 && item.reserved > 0))
-          item.reserved = ((item.reserved & 0xff000000) | (size & 0xffffff)) >>> 0;
+        const size = this.fileBytes(layout ? overlayFiles.get(file.id)! : file).length;
+        for (const matching of layout ? table.entries.filter((item) => item.fileId === file.id) : [item]) {
+          if ((matching.reserved >>> 24) & 1 || (!arm9 && matching.reserved > 0))
+            matching.reserved = ((matching.reserved & 0xff000000) | (size & 0xffffff)) >>> 0;
+        }
         overlayIds.add(file.id);
       }
       if (table.entries.length !== files.length) throw new Error("Changing overlay file count is unsupported");
+      if (layout) for (const item of table.entries) item.fileId = layout.sourceIds.get(item.fileId)!;
       const encoded = table.toBuffer();
       if (arm9) {
         h.ARM9overlayOffset = writer.position;
@@ -207,10 +263,12 @@ export class NDSFile {
     h.ARM7overlayOffset = 0;
     writeOverlays(false);
     h.FNToffset = writer.position;
-    h.FNTsize = this.fileBytes(system("fnt.bin")).length;
-    write(system("fnt.bin"));
+    const fnt = layout?.fnt ?? this.fileBytes(system("fnt.bin"));
+    h.FNTsize = fnt.length;
+    writer.write(fnt);
+    writer.pad(0x200);
     h.FAToffset = writer.position;
-    h.FATsize = this.fatTable.entries.length * 8;
+    h.FATsize = (layout?.files.length ?? this.fatTable.entries.length) * 8;
     writer.write(Buffer.alloc(h.FATsize));
     writer.pad(0x200);
     h.bannerOffset = writer.position;
@@ -223,19 +281,22 @@ export class NDSFile {
     if (h.unitCode & 2 && h.headerSize > 0x200) h.banner_size = bannerBytes.length;
     writer.write(bannerBytes);
     writer.pad(0x200);
-    for (const [index, id] of this.fatTable.sortedIDs.entries()) {
-      if (overlayIds.has(id)) continue;
-      const file = FileNameTable.findFile(id, this.root);
-      if (file) write(file, index < this.fatTable.sortedIDs.length - 1);
-      else {
-        // Games can address FAT entries directly without a NitroFS filename.
-        // Keep their payload and allocation instead of silently zeroing the entry.
-        const entry = this.fatTable.entries[id];
-        if (entry.size > 0) {
-          write({ ...entry, name: `FAT entry ${id}` }, index < this.fatTable.sortedIDs.length - 1);
+    if (layout) {
+      for (const [index, file] of layout.files.entries()) write(file, index < layout.files.length - 1);
+    } else
+      for (const [index, id] of this.fatTable.sortedIDs.entries()) {
+        if (overlayIds.has(id)) continue;
+        const file = FileNameTable.findFile(id, this.root);
+        if (file) write(file, index < this.fatTable.sortedIDs.length - 1);
+        else {
+          // Games can address FAT entries directly without a NitroFS filename.
+          // Keep their payload and allocation instead of silently zeroing the entry.
+          const entry = this.fatTable.entries[id];
+          if (entry.size > 0) {
+            write({ ...entry, name: `FAT entry ${id}` }, index < this.fatTable.sortedIDs.length - 1);
+          }
         }
       }
-    }
     const logicalEnd = writer.position;
     const fat = Buffer.alloc(h.FATsize);
     for (const [id, location] of placements) {

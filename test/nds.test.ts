@@ -46,3 +46,62 @@ test("malformed ROM offsets and recursive directory trees are rejected", async (
   recursive.writeUInt16LE(0xf000, p + 1 + (recursive[p] & 0x7f));
   assert.throws(() => new NDSFile(recursive), /directory|cycle/i);
 });
+
+test("addFile supports queries, existing directories, repeated output and subsequent additions", async () => {
+  const { NDSFile } = await import("../src/nitro/nds-file");
+  const input = createRom();
+  const saved = Buffer.from(input);
+  const rom = new NDSFile(input);
+  rom.addFile("DATA/sub/Extra.bin", Buffer.from("extra"));
+  rom.addFile("data/New/Deep/Empty.bin", Buffer.alloc(0));
+  rom.addFile("data/A.txt", Buffer.from("a"));
+  assert.equal(rom.hasFile("data/SUB/EXTRA.BIN"), true);
+  assert.equal(rom.getFile("data/sub/Extra.bin").toString(), "extra");
+  assert.deepEqual(
+    rom.listFiles().find(({ path }) => path === "data/A.txt"),
+    { path: "data/A.txt", id: -1, offset: -1, size: 1 },
+  );
+  rom.replaceFile("data/A.txt", Buffer.from("updated"));
+  const output = rom.toBuffer();
+  assert.deepEqual(output, rom.toBuffer());
+  assert.deepEqual(input, saved);
+  const reopened = new NDSFile(output);
+  assert.equal(reopened.getFile("data/A.txt").toString(), "updated");
+  assert.equal(reopened.getFile("data/New/Deep/Empty.bin").length, 0);
+  assert.equal(reopened.data.files[0].id, 0);
+  assert.equal(reopened.data.files[1].id, 1);
+  assert.equal(rom.data.files.find((file) => file.name === "hello.txt")?.id, 0);
+  rom.addFile("data/New/Deep/Next.bin", Buffer.from("next"));
+  assert.equal(new NDSFile(rom.toBuffer()).getFile("data/New/Deep/Next.bin").toString(), "next");
+  reopened.addFile("data/New/Deep/Existing.bin", Buffer.from("existing"));
+  assert.equal(new NDSFile(reopened.toBuffer()).getFile("data/New/Deep/Existing.bin").toString(), "existing");
+});
+
+test("addFile validates path components and encoded length before changing the tree", async () => {
+  const { NDSFile } = await import("../src/nitro/nds-file");
+  const rom = new NDSFile(createRom());
+  const baseline = rom.toBuffer();
+  for (const path of [
+    "arm9.bin",
+    "/data/a",
+    "C:/data/a",
+    "data/a/../b",
+    "data/a/./b",
+    "data/a//b",
+    "data/a/",
+    "data/\0",
+    "data/hello.txt",
+    "data/hello.txt/child",
+    "data/sub",
+    "data/new/😀",
+    `data/${"あ".repeat(64)}`,
+  ])
+    assert.throws(() => rom.addFile(path, Buffer.alloc(0)), /path|exists|Shift_JIS|bytes/i);
+  assert.deepEqual(rom.toBuffer(), baseline);
+  assert.equal(
+    rom.data.folders.some((folder) => folder.name === "new"),
+    false,
+  );
+  rom.addFile(`data/${"a".repeat(127)}`, Buffer.alloc(0));
+  assert.equal(new NDSFile(rom.toBuffer()).getFile(`data/${"a".repeat(127)}`).length, 0);
+});

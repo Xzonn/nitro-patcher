@@ -8,6 +8,11 @@ export interface ZipOptions {
   maxEntries?: number;
 }
 
+export interface ZipEntry {
+  path: string;
+  data: Buffer;
+}
+
 const fail = (message: string): never => {
   throw new Error(`ZIP: ${message}`);
 };
@@ -64,7 +69,7 @@ function filename(raw: Buffer, flags: number, fields: Map<number, Buffer>): stri
  * ZIP64, encryption, split archives and other compression methods fail explicitly.
  * Format reference: https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT
  */
-export const readZip = (input: Uint8Array, options: ZipOptions = {}): Map<string, Buffer> => {
+export const readZipEntries = (input: Uint8Array, options: ZipOptions = {}): Map<string, ZipEntry> => {
   if (!(input instanceof Uint8Array)) throw new TypeError("ZIP input must be a Buffer or Uint8Array");
   const bytes = Buffer.from(input.buffer, input.byteOffset, input.byteLength);
   const maxSize = boundOption(options.maxUncompressedSize, 1024 * 1024 * 1024, "maxUncompressedSize");
@@ -96,7 +101,7 @@ export const readZip = (input: Uint8Array, options: ZipOptions = {}): Map<string
   checkRange(bytes, centralOffset, centralSize, eocd);
   if (centralOffset + centralSize !== eocd) fail("central directory size/offset mismatch");
   if (count > Math.floor(centralSize / 46)) fail("entry count exceeds central directory size");
-  const result = new Map<string, Buffer>();
+  const result = new Map<string, ZipEntry>();
   const ranges: { start: number; end: number }[] = [];
   let offset = centralOffset,
     totalSize = 0;
@@ -124,7 +129,8 @@ export const readZip = (input: Uint8Array, options: ZipOptions = {}): Map<string
     checkRange(bytes, offset + 46, nameLength + extraLength + commentLength, eocd);
     const rawName = bytes.subarray(offset + 46, offset + 46 + nameLength);
     const fields = extras(bytes.subarray(offset + 46 + nameLength, offset + 46 + nameLength + extraLength));
-    const name = filename(rawName, flags, fields).replaceAll("\\", "/").toLowerCase();
+    const path = filename(rawName, flags, fields).replaceAll("\\", "/");
+    const name = path.toLowerCase();
     offset += 46 + nameLength + extraLength + commentLength;
 
     checkRange(bytes, localOffset, 30, centralOffset);
@@ -177,7 +183,7 @@ export const readZip = (input: Uint8Array, options: ZipOptions = {}): Map<string
     }
     if (data.length !== size) fail(`uncompressed size mismatch for ${JSON.stringify(name)}`);
     if (crc32(data) !== checksum) fail(`CRC32 mismatch for ${JSON.stringify(name)}`);
-    if (name && !name.endsWith("/")) result.set(name, data);
+    if (name && !name.endsWith("/")) result.set(name, { path, data });
   }
   if (offset !== eocd) fail("central directory entry count/length mismatch");
   ranges.sort((a, b) => a.start - b.start);
@@ -185,6 +191,10 @@ export const readZip = (input: Uint8Array, options: ZipOptions = {}): Map<string
     if (ranges[i]!.start < ranges[i - 1]!.end) fail("overlapping local entry ranges");
   return result;
 };
+
+/** Read file contents using normalized paths, with the final duplicate winning. */
+export const readZip = (input: Uint8Array, options: ZipOptions = {}): Map<string, Buffer> =>
+  new Map([...readZipEntries(input, options)].map(([name, entry]) => [name, entry.data]));
 
 /** Extract one file using the same normalized, case-insensitive paths as readZip. */
 export const extractZipEntry = (input: Uint8Array, entryName: string, options: ZipOptions = {}): Buffer => {
