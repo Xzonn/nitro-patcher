@@ -6,9 +6,10 @@ export { FileAllocationTable, FileNameTable, OverlayTable } from "./nitro/filesy
 export type { FatEntry, NitroFile, NitroFolder, OverlayItem } from "./nitro/filesystem";
 export { BinaryWriter } from "./nitro/binary";
 export { crc16, crc32 } from "./nitro/crc";
-export { aes128CtrCrypt, encryptSecureArea, modcryptKey } from "./nitro/crypto";
+export { aes128CtrCrypt, decryptSecureArea, encryptSecureArea, modcryptKey } from "./nitro/crypto";
 export type { ModcryptHeader } from "./nitro/crypto";
 export { compressArm9, compressBLZ, decompressArm9, decompressBLZ } from "./nitro/blz";
 export type { Arm9Header } from "./nitro/blz";
 export { TWL, updateHeaderSignatures } from "./nitro/twl";
 export type { OverlayRange, SignedTwlHeader, TwlHeader } from "./nitro/twl";
+export type { DsiCheck, DsiVerification } from "./nitro/twl-complete";

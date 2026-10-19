@@ -77,6 +77,8 @@ export class Header {
   declare ARM9autoload: number;
   declare ARM7autoload: number;
   declare ROMsize: number;
+  declare ntr_region_end: number;
+  declare twl_region_start: number;
   declare headerSize: number;
   declare logoCRC16: number;
   declare headerCRC16: number;
@@ -219,6 +221,8 @@ field("secureDisable", 0x78, 8, "number");
 field("ROMsize", 0x80, 4, "number");
 field("headerSize", 0x84, 4, "number");
 field("reserved2", 0x88, 56);
+field("ntr_region_end", 0x90, 2, "number");
+field("twl_region_start", 0x92, 2, "number");
 field("logo", 0xc0, 156);
 field("logoCRC16", 0x15c, 2, "number");
 field("headerCRC16", 0x15e, 2, "number");

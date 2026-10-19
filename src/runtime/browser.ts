@@ -2,6 +2,7 @@ import { ecb } from "#browser-aes";
 import { md5, sha1 } from "#browser-hashes";
 import { hmac } from "#browser-hmac";
 import { Inflate } from "fflate";
+export { verifyDsiSignature as verifyRsaSha1 } from "./rsa";
 
 export const hashDigest = (algorithm: "md5" | "sha1", data: Uint8Array): Buffer =>
   Buffer.from((algorithm === "md5" ? md5 : sha1)(data));
@@ -30,9 +31,8 @@ export const inflateRawSync = (data: Uint8Array, options: { maxOutputLength: num
 // These Node-only methods are not exposed by the browser public API. Keep a
 // clear error if a future internal call accidentally crosses that boundary.
 const nodeOnly = (): never => {
-  throw new Error("Filesystem and RSA APIs are only available in the Node entry");
+  throw new Error("Filesystem APIs are only available in the Node entry");
 };
 export const readFile = nodeOnly;
 export const writeFile = nodeOnly;
 export const readFileSync = nodeOnly;
-export const verifyRsaSha1 = nodeOnly;

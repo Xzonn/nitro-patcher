@@ -1,5 +1,7 @@
 import { createAesBlockCipher } from "#nitro-runtime";
 
+import { crc16 } from "./crc";
+
 export interface ModcryptHeader {
   gameCode: string;
   gameTitle: string;
@@ -117,32 +119,37 @@ export const modcryptKey = (header: ModcryptHeader): Buffer => {
   return out;
 };
 
-export const encryptSecureArea = (gameCode: string, input: Buffer): Buffer => {
+export const encryptSecureArea = (gameCode: string, input: Buffer, refreshCrc = false): Buffer =>
+  secureAreaCrypt(gameCode, input, false, refreshCrc);
+export const decryptSecureArea = (gameCode: string, input: Buffer): Buffer => secureAreaCrypt(gameCode, input, true);
+
+const secureAreaCrypt = (gameCode: string, input: Buffer, decrypting: boolean, refreshCrc = false): Buffer => {
   if (typeof gameCode !== "string" || gameCode.length !== 4) throw new Error("Expected four-character game code");
   if (input.length < 0x800) throw new RangeError("Secure area must contain at least 0x800 bytes");
   const output = Buffer.from(input);
+  if (refreshCrc) output.writeUInt16LE(crc16(output.subarray(0x10, 0x800)), 0xe);
   let magic = new Uint32Array(0x412);
   let args: [number, number, number] = [0, 0, 0];
-  function encrypt(a: number, b: number): [number, number] {
+  function crypt(a: number, b: number, reverse = false): [number, number] {
     for (let i = 0; i < 16; i++) {
-      const c = (magic[i] ^ a) >>> 0;
+      const c = (magic[reverse ? 17 - i : i] ^ a) >>> 0;
       const sum = (magic[18 + (c >>> 24)] + magic[274 + ((c >>> 16) & 255)]) >>> 0;
       const f = (magic[786 + (c & 255)] + (magic[530 + ((c >>> 8) & 255)] ^ sum)) >>> 0;
       a = (b ^ f) >>> 0;
       b = c;
     }
-    return [(b ^ magic[17]) >>> 0, (a ^ magic[16]) >>> 0];
+    return [(b ^ magic[reverse ? 0 : 17]) >>> 0, (a ^ magic[reverse ? 1 : 16]) >>> 0];
   }
   function init2() {
-    [args[2], args[1]] = encrypt(args[2], args[1]);
-    [args[1], args[0]] = encrypt(args[1], args[0]);
+    [args[2], args[1]] = crypt(args[2], args[1]);
+    [args[1], args[0]] = crypt(args[1], args[0]);
     const key = Buffer.alloc(12);
     args.forEach((v, i) => key.writeUInt32LE(v, i * 4));
     for (let j = 0; j < 18; j++) magic[j] ^= key.readUInt32BE((j * 4) & 7);
     let a = 0,
       b = 0;
     for (let i = 0; i < 0x412; i += 2) {
-      [a, b] = encrypt(a, b);
+      [a, b] = crypt(a, b);
       magic[i] = a;
       magic[i + 1] = b;
     }
@@ -155,17 +162,28 @@ export const encryptSecureArea = (gameCode: string, input: Buffer): Buffer => {
     init2();
   }
   init1();
+  if (decrypting) {
+    const [b, a] = crypt(output.readUInt32LE(4), output.readUInt32LE(0), true);
+    output.writeUInt32LE(a, 0);
+    output.writeUInt32LE(b, 4);
+  }
   args[1] = (args[1] << 1) >>> 0;
   args[2] >>>= 1;
   init2();
-  for (let p = 8; p < 0x800; p += 8) {
-    const [b, a] = encrypt(output.readUInt32LE(p + 4), output.readUInt32LE(p));
+  for (let p = decrypting ? 0 : 8; p < 0x800; p += 8) {
+    const [b, a] = crypt(output.readUInt32LE(p + 4), output.readUInt32LE(p), decrypting);
     output.writeUInt32LE(a, p);
     output.writeUInt32LE(b, p + 4);
   }
-  let [b, a] = encrypt(0x6a624f79, 0x72636e65);
+  if (decrypting) {
+    if (output.readUInt32LE(0) !== 0x72636e65 || output.readUInt32LE(4) !== 0x6a624f79)
+      throw new Error("Invalid KEY1 secure-area marker");
+    output.writeBigUInt64LE(0xe7ffdeffe7ffdeffn);
+    return output;
+  }
+  let [b, a] = crypt(0x6a624f79, 0x72636e65);
   init1();
-  [b, a] = encrypt(b, a);
+  [b, a] = crypt(b, a);
   output.writeUInt32LE(a, 0);
   output.writeUInt32LE(b, 4);
   return output;

@@ -3,6 +3,7 @@ import { hashDigest, readFile } from "#nitro-runtime";
 
 import { bytes } from "./nitro/binary";
 import { NDSFile } from "./nitro/nds-file";
+import type { DsiVerification } from "./nitro/twl-complete";
 import { decodeXdelta } from "./patch/xdelta";
 import { extractZipEntry as extractEntry, readZip, readZipEntries } from "./patch/zip";
 
@@ -19,6 +20,7 @@ export interface PatchResult {
   /** MD5 of the original input, before preprocessing. */
   inputMd5: string;
   outputMd5: string;
+  dsi?: DsiVerification;
 }
 
 export interface PatchOptions {
@@ -159,7 +161,13 @@ export const patchBuffer = (original: Uint8Array, patch: Uint8Array, options: Pa
   const formatVersion = readMetadata(patches)?.formatVersion ?? 1;
   const inputMd5 = md5(input);
   const preprocessing = patches.get(`preprocessing/${inputMd5}.xdelta`);
-  const rom = new NDSFile(preprocessing ? decodeXdelta(input, preprocessing, options) : input, options);
+  const romOptions = { ...options, dsiMode: formatVersion === 2 ? ("complete" as const) : ("legacy" as const) };
+  const rom = new NDSFile(preprocessing ? decodeXdelta(input, preprocessing, options) : input, romOptions);
+  if (formatVersion === 2)
+    for (const name of ["arm9i.bin", "arm7i.bin"]) {
+      if ((patches.has(name) || patches.has(`xdelta/${name}`)) && !rom.hasFile(name))
+        throw new Error(`${name} requires a complete DSi-enhanced cartridge`);
+    }
   let matched = true;
   const md5File = patches.get("md5.txt");
   if (md5File) {
@@ -202,6 +210,7 @@ export const patchBuffer = (original: Uint8Array, patch: Uint8Array, options: Pa
     returnValue: matched ? PatchReturnValue.SUCCESS : PatchReturnValue.MD5_MISMATCH,
     inputMd5,
     outputMd5: md5(buffer),
+    ...(formatVersion === 2 && rom.header.unitCode === 2 && { dsi: new NDSFile(buffer, romOptions).verifyDsi() }),
   };
 };
 

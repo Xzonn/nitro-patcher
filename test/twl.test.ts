@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, createHmac } from "node:crypto";
+import { createHmac } from "node:crypto";
 import test from "node:test";
 
 import { BinaryWriter } from "../src/nitro/binary";
@@ -80,7 +80,7 @@ test("TWL rejects NTR output colliding with fixed hash tables before mutation", 
   assert.throws(() => new TWL(h, [], rom).writeTo(w, h), /overlaps/);
   assert.deepEqual(w.buffer, rom);
 });
-test("header signature preserves original by default or writes no$gba SHA1 mask", () => {
+test("malformed RSA padding fails before changing the header or signature", () => {
   const original = Buffer.alloc(0x1000, 0x77),
     signature = Buffer.alloc(128, 0x88);
   const header = {
@@ -90,17 +90,10 @@ test("header signature preserves original by default or writes no$gba SHA1 mask"
   const writer = new BinaryWriter(0x2000);
   writer.write(original);
   writer.position = 0x1000;
-  updateHeaderSignatures(writer, header, original, true);
+  assert.throws(() => updateHeaderSignatures(writer, header, original, true), /block is invalid/);
   assert.deepEqual(header.rsa_signature, signature);
   assert.equal(writer.position, 0x1000);
-  updateHeaderSignatures(writer, header, original, false);
-  assert.equal(header.rsa_signature[0], 0);
-  assert.equal(header.rsa_signature[1], 1);
-  assert.equal(header.rsa_signature[107], 0);
-  const data = Buffer.from(original.subarray(0, 0xe00));
-  header.hmac_digest_master.copy(data, 0x328);
-  assert.deepEqual(header.rsa_signature.subarray(108), createHash("sha1").update(data).digest());
-  assert.deepEqual(writer.buffer.subarray(0xf80, 0x1000), header.rsa_signature);
+  assert.deepEqual(writer.toBuffer(), original);
 });
 
 test("encrypted TWL hashes plaintext, encrypts at modcrypt offset and decrypts on read", () => {

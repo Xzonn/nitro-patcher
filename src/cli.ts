@@ -17,6 +17,7 @@ const help = `nitro-patcher — NDS ROM 补丁工具
 
   --json         结果输出为 JSON 格式
   --dry-run      完整执行补丁流程，但不写入输出 ROM
+  --dsi-mode     extract/inspect 的 DSi 处理模式：legacy 或 complete
   -i, --input    输入 ROM 路径
   -p, --patch    补丁 ZIP 路径
   -o, --output   输出 ROM 或提取目录；试运行时可省略
@@ -29,6 +30,7 @@ interface CommandOptions {
   input: string | undefined;
   patch: string | undefined;
   output: string | undefined;
+  dsiMode: "legacy" | "complete" | undefined;
 }
 
 const sameFile = async (input: string, output: string): Promise<boolean> => {
@@ -79,7 +81,7 @@ const formatMetadata = (metadata: PatchMetadata): string => {
 const extractRom = async (options: CommandOptions): Promise<void> => {
   if (!options.input || !options.output || options.patch !== undefined || options.dryRun) throw new Error(help);
   const destination = join(await realpath(dirname(resolve(options.output))), basename(resolve(options.output)));
-  const rom = new NDSFile(await readFile(options.input));
+  const rom = new NDSFile(await readFile(options.input), { dsiMode: options.dsiMode ?? "legacy" });
   const files = rom.listFiles();
   await mkdir(destination, { recursive: true });
   for (const { path } of files) {
@@ -106,7 +108,7 @@ const inspectRom = async (options: CommandOptions): Promise<void> => {
   if (!options.input || options.patch !== undefined || options.output !== undefined || options.dryRun)
     throw new Error(help);
   const input = await readFile(options.input);
-  const rom = new NDSFile(input);
+  const rom = new NDSFile(input, { dsiMode: options.dsiMode ?? "legacy" });
   const info = {
     gameTitle: rom.header.gameTitle.replace(/\0+$/, ""),
     gameCode: rom.header.gameCode,
@@ -118,6 +120,7 @@ const inspectRom = async (options: CommandOptions): Promise<void> => {
       secureArea: rom.header.secureCRC,
       banner: rom.banner.bannerCRC,
     },
+    ...(options.dsiMode === "complete" && { dsi: rom.verifyDsi() }),
   };
   if (options.json) {
     console.log(JSON.stringify(info));
@@ -134,6 +137,9 @@ const inspectRom = async (options: CommandOptions): Promise<void> => {
 - Logo：${info.checksums.logo ? "通过" : "失败"}
 - Secure Area：${info.checksums.secureArea ? "通过" : "失败"}
 - Banner：${info.checksums.banner ? "通过" : "失败"}`);
+  if (info.dsi)
+    for (const [name, result] of Object.entries(info.dsi))
+      console.log(`- DSi ${name}：${result.status}${result.reason ? ` (${result.reason})` : ""}`);
 };
 
 const main = async (): Promise<void> => {
@@ -144,6 +150,7 @@ const main = async (): Promise<void> => {
       version: { type: "boolean", short: "v" },
       json: { type: "boolean" },
       "dry-run": { type: "boolean" },
+      "dsi-mode": { type: "string" },
       input: { type: "string", short: "i" },
       patch: { type: "string", short: "p" },
       output: { type: "string", short: "o" },
@@ -160,12 +167,16 @@ const main = async (): Promise<void> => {
     console.log(metadata.version);
     return;
   }
+  const dsiMode = values["dsi-mode"];
+  if (dsiMode !== undefined && dsiMode !== "legacy" && dsiMode !== "complete")
+    throw new Error("Invalid --dsi-mode; expected legacy or complete");
   const options: CommandOptions = {
     json: values.json ?? false,
     dryRun: values["dry-run"] ?? false,
     input: values.input,
     patch: values.patch,
     output: values.output,
+    dsiMode,
   };
   const command = positionals.length === 1 ? positionals[0] : undefined;
   if (positionals.length !== 0 && positionals.length !== 1 && positionals.length !== 3) throw new Error(help);
@@ -181,6 +192,7 @@ const main = async (): Promise<void> => {
   }
 
   const dryRun = options.dryRun;
+  if (options.dsiMode !== undefined) throw new Error("patch selects DSi processing from metadata.json formatVersion");
   const usesLegacyPaths = positionals.length === 3;
   if (usesLegacyPaths && (values.input !== undefined || values.patch !== undefined || values.output !== undefined))
     throw new Error(help);
@@ -216,6 +228,7 @@ const main = async (): Promise<void> => {
         outputMd5,
         ...info,
         ...(dryRun && { dryRun: true }),
+        ...(result.dsi && { dsi: result.dsi }),
       }),
     );
     return;

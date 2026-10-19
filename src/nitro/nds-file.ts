@@ -4,15 +4,19 @@ import { readFile, writeFile } from "#nitro-runtime";
 import { Banner } from "./banner";
 import { BinaryWriter, DEFAULT_MAX_SIZE, bytes, range } from "./binary";
 import { crc16 } from "./crc";
-import { encryptSecureArea } from "./crypto";
+import { decryptSecureArea, encryptSecureArea } from "./crypto";
 import { FileAllocationTable, FileNameTable, OverlayTable, encodeName } from "./filesystem";
 import type { NitroFile, NitroFolder } from "./filesystem";
 import { Header } from "./header";
 import { TWL } from "./twl";
+import { noDsiVerification } from "./twl-complete";
+import type { DsiSection, DsiVerification } from "./twl-complete";
 
 export interface RomOptions {
   /** Maximum generated ROM size in bytes. Defaults to 1 GiB. */
   maxOutputSize?: number;
+  /** Complete DSi cartridge handling is opt-in for direct API calls. */
+  dsiMode?: "legacy" | "complete";
 }
 
 export interface RomFileInfo {
@@ -45,8 +49,12 @@ export class NDSFile {
   constructor(input: Uint8Array, options: RomOptions = {}) {
     this.original = bytes(input, "ROM");
     this.maxOutputSize = options.maxOutputSize ?? DEFAULT_MAX_SIZE;
+    if (!Number.isSafeInteger(this.maxOutputSize) || this.maxOutputSize < 1 || this.maxOutputSize > 0xffffffff)
+      throw new RangeError("Invalid output size limit");
     this.header = new Header(this.original);
     const h = this.header;
+    if (options.dsiMode === "complete" && h.unitCode === 3)
+      throw new Error("DSi-exclusive cartridges and DSiWare are unsupported");
     range(this.original, h.ARM9romOffset, h.ARM9size + (h.nitrocode ? 12 : 0), "ARM9");
     range(this.original, h.ARM7romOffset, h.ARM7size, "ARM7");
     this.banner = new Banner(this.original, h.bannerOffset, h.banner_size);
@@ -83,7 +91,53 @@ export class NDSFile {
       for (const child of folder.folders) visit(child, `${prefix + child.name}/`);
     };
     visit(this.root, "");
-    if (h.unitCode & 2 && h.twlInternalFlags & 1 && h.tid_high && h.tid_high !== 0xffffffff) {
+    if (options.dsiMode === "complete" && h.unitCode & 2) {
+      const regions: { start: number; size: number; name: string; payload?: boolean }[] = [
+        ...this.root.files.map((file) => ({ start: file.offset, size: file.size, name: file.name })),
+        ...this.fatTable.entries.map((file) => ({
+          start: file.offset,
+          size: file.size,
+          name: `FAT ${file.id}`,
+          payload: true,
+        })),
+        { start: h.dsi9_rom_offset, size: h.dsi9_size, name: "ARM9i" },
+        { start: h.dsi7_rom_offset, size: h.dsi7_size, name: "ARM7i" },
+        { start: h.sector_hashtable_start, size: h.sector_hashtable_size, name: "DSi sector table" },
+        { start: h.block_hashtable_start, size: h.block_hashtable_size, name: "DSi block table" },
+      ]
+        .filter((region) => region.size)
+        .sort((a, b) => a.start - b.start);
+      let systemEnd: (typeof regions)[number] | undefined;
+      let payloadEnd: (typeof regions)[number] | undefined;
+      for (const region of regions) {
+        range(this.original, region.start, region.size, region.name);
+        for (const previous of [systemEnd, region.payload ? undefined : payloadEnd])
+          if (previous && previous.start + previous.size > region.start)
+            throw new Error(`DSi ROM regions overlap: ${previous.name} and ${region.name}`);
+        if (region.payload) {
+          if (!payloadEnd || region.start + region.size > payloadEnd.start + payloadEnd.size) payloadEnd = region;
+        } else systemEnd = region;
+      }
+      this.twl = new TWL(
+        h,
+        this.overlay9Table.entries
+          .filter((entry) => entry.reserved & 0x2000000)
+          .map((entry) => {
+            const file = this.fatTable.entries[entry.fileId];
+            return { offset: file.offset, size: file.size };
+          }),
+        this.original,
+        { dsiMode: "complete", maxOutputSize: this.maxOutputSize },
+      );
+      for (const [name, offset, size] of [
+        ["arm9i.bin", h.dsi9_rom_offset, h.dsi9_size],
+        ["arm7i.bin", h.dsi7_rom_offset, h.dsi7_size],
+      ] as const) {
+        const file: NitroFile = { name, id: 0xffff, offset, size };
+        this.root.files.push(file);
+        this.paths.set(name, { path: name, file });
+      }
+    } else if (h.unitCode & 2 && h.twlInternalFlags & 1 && h.tid_high && h.tid_high !== 0xffffffff) {
       // Upstream silently discarded malformed TWL regions. Preserve valid DSi data,
       // and reject malformed data instead of emitting a ROM with missing sections.
       this.twl = new TWL(h, arm9Overlays, this.original);
@@ -105,7 +159,10 @@ export class NDSFile {
       path,
       id: file.id,
       offset: file.offset,
-      size: file.replacement?.length ?? file.size,
+      size:
+        this.twl?.complete && (path === "arm9i.bin" || path === "arm7i.bin")
+          ? this.twl.complete.getProgram(path === "arm9i.bin" ? "arm9i" : "arm7i").length
+          : (file.replacement?.length ?? file.size),
     }));
   }
   hasFile(path: string): boolean {
@@ -120,6 +177,12 @@ export class NDSFile {
   replaceFile(path: string, content: Uint8Array): void {
     const entry = this.paths.get(key(path));
     if (!entry) throw new Error(`ROM file not found: ${path}`);
+    if (this.twl?.complete && content.byteLength > this.maxOutputSize)
+      throw new RangeError("Replacement exceeds output size limit");
+    if (this.twl?.complete && (key(path) === "arm9i.bin" || key(path) === "arm7i.bin")) {
+      this.twl.complete.setProgram(key(path) === "arm9i.bin" ? "arm9i" : "arm7i", bytes(content));
+      return;
+    }
     entry.file.replacement = Buffer.from(bytes(content));
   }
   /** Add a NitroFS file and any missing parent directories. */
@@ -168,11 +231,36 @@ export class NDSFile {
     this.structureChanged = true;
   }
   private fileBytes(file: NitroFile): Buffer {
+    if (this.twl?.complete && (file.name === "arm9i.bin" || file.name === "arm7i.bin"))
+      return this.twl.complete.getProgram(file.name === "arm9i.bin" ? "arm9i" : "arm7i");
     return file.replacement ?? range(this.original, file.offset, file.size, file.name);
+  }
+
+  verifyDsi(): DsiVerification {
+    if (this.twl?.complete) return this.twl.complete.verify();
+    if (this.header.unitCode & 2)
+      return new NDSFile(this.original, { dsiMode: "complete", maxOutputSize: this.maxOutputSize }).verifyDsi();
+    return noDsiVerification();
   }
 
   /** Rebuild offsets, allocation table, CRCs and ROM padding. Safe to call repeatedly. */
   toBuffer(): Buffer {
+    if (
+      this.twl?.complete &&
+      !this.structureChanged &&
+      this.twl.complete.unchanged() &&
+      this.header.raw.equals(this.original.subarray(0, this.header.raw.length)) &&
+      this.banner
+        .toBuffer()
+        .equals(new Banner(this.original, this.header.bannerOffset, this.header.banner_size).toBuffer()) &&
+      [...this.paths.values()].every(
+        ({ file }) =>
+          !file.replacement || file.replacement.equals(range(this.original, file.offset, file.size, file.name)),
+      )
+    ) {
+      if (this.original.length > this.maxOutputSize) throw new RangeError("Output exceeds size limit");
+      return Buffer.from(this.original);
+    }
     const fntReplacement = this.root.files.find((file) => file.name === "fnt.bin")?.replacement;
     if (this.structureChanged && fntReplacement) throw new Error("Adding files conflicts with an fnt.bin replacement");
     if (fntReplacement) {
@@ -183,6 +271,7 @@ export class NDSFile {
         throw new Error("Replacement FNT must preserve existing file IDs");
     }
     const layout = this.structureChanged ? this.fntTable.serialize(this.fatTable, this.overlay.files) : undefined;
+    if (this.twl?.complete) return this.serializeDsi(layout);
     const overlayFiles = new Map(this.overlay.files.map((file) => [file.id, file]));
     const h = new Header(this.header.toBuffer());
     h.nitrocode = this.header.nitrocode;
@@ -323,5 +412,144 @@ export class NDSFile {
   }
   async saveAs(path: string): Promise<void> {
     await writeFile(path, this.toBuffer());
+  }
+
+  private serializeDsi(layout: ReturnType<FileNameTable["serialize"]> | undefined): Buffer {
+    const twl = this.twl!.complete!;
+    const h = new Header(this.header.raw);
+    h.nitrocode = this.header.nitrocode;
+    const system = (name: string): NitroFile => this.paths.get(name)!.file;
+    const replacement = system("header.bin").replacement;
+    if (replacement) {
+      const source = new Header(replacement);
+      if (
+        source.unitCode !== 2 ||
+        source.tid_high !== h.tid_high ||
+        source.tid_low !== h.tid_low ||
+        (h.dsi9_size && !source.dsi9_size) ||
+        (h.dsi7_size && !source.dsi7_size)
+      )
+        throw new Error("Replacement header changes or clears the DSi cartridge identity or programs");
+      // Preserve semantic and unknown header bytes; physical fields are assigned below.
+      source.raw.copy(h.raw);
+      for (const [start, end] of [
+        [0x20, 0x40],
+        [0x40, 0x60],
+        [0x68, 0x6e],
+        [0x80, 0x88],
+        [0x90, 0x94],
+        [0x1c0, 0x1c4],
+        [0x1cc, 0x1d4],
+        [0x1dc, 0x214],
+        [0x220, 0x230],
+        [0x300, 0x378],
+        [0x3a0, 0x3b4],
+        [0xf80, 0x1000],
+      ])
+        this.header.raw.copy(h.raw, start, start, end);
+      h.ARM9entryAddress = source.ARM9entryAddress;
+      h.ARM9ramAddress = source.ARM9ramAddress;
+      h.ARM7entryAddress = source.ARM7entryAddress;
+      h.ARM7ramAddress = source.ARM7ramAddress;
+      h.dsi7_ram_address = source.dsi7_ram_address;
+      h.headerSize = this.header.headerSize;
+    }
+    const sections: DsiSection[] = [];
+    const add = (label: string, file: NitroFile, data: Buffer, place: (start: number) => void): void => {
+      sections.push({ label, start: file.offset, originalSize: file.size, data, place });
+    };
+    const arm9File = system("arm9.bin");
+    let arm9 = this.fileBytes(arm9File);
+    if (arm9File.replacement) h.nitrocode = arm9.length >= 12 && arm9.readUInt32LE(arm9.length - 12) === 0xdec00621;
+    if (h.gameCode !== twl.header.gameCode && arm9.readBigUInt64LE(0) !== 0xe7ffdeffe7ffdeffn)
+      arm9 = encryptSecureArea(h.gameCode, decryptSecureArea(twl.header.gameCode, arm9));
+    const signedOverlays = this.overlay9Table.entries.filter((entry) => entry.reserved & 0x2000000);
+    arm9 = twl.updateOverlays9Sha1Hmac(
+      arm9,
+      h,
+      signedOverlays.map((entry) => this.fileBytes(this.overlay.files.find((file) => file.id === entry.fileId)!)),
+    );
+    h.ARM9size = arm9.length - (h.nitrocode ? 12 : 0);
+    h.decrypted = arm9.length >= 8 && arm9.readBigUInt64LE(0) === 0xe7ffdeffe7ffdeffn;
+    const plainArm9 = h.decrypted ? Buffer.from(arm9) : decryptSecureArea(h.gameCode, arm9);
+    plainArm9.writeUInt16LE(crc16(range(plainArm9, 0x10, 0x7f0, "ARM9 secure-area CRC")), 0xe);
+    arm9 = h.decrypted ? plainArm9 : encryptSecureArea(h.gameCode, plainArm9);
+    add("ARM9", arm9File, arm9, (start) => {
+      h.ARM9romOffset = start;
+    });
+    const written = new Set<number>();
+    const fileList =
+      layout?.files ??
+      this.fatTable.entries.map(
+        (entry) => FileNameTable.findFile(entry.id, this.root) ?? { ...entry, name: `FAT entry ${entry.id}` },
+      );
+    const fat = Buffer.alloc(fileList.length * 8);
+    const addPayload = (file: NitroFile): void => {
+      const id = layout ? (file.id >= 0 ? layout.sourceIds.get(file.id)! : layout.ids.get(file)!) : file.id;
+      if (written.has(id)) return;
+      written.add(id);
+      const overlay = this.overlay.files.find((overlay) => overlay.id === file.id);
+      if (overlay) file = overlay;
+      const data = this.fileBytes(file);
+      add(file.name, file, data, (start) => {
+        fat.writeUInt32LE(start, id * 8);
+        fat.writeUInt32LE(start + data.length, id * 8 + 4);
+      });
+    };
+    const overlays = (arm9: boolean): void => {
+      const name = arm9 ? "overarm9.bin" : "overarm7.bin";
+      if (!this.hasFile(name)) return;
+      const source = arm9 ? this.overlay9Table : this.overlay7Table;
+      const file = system(name);
+      const data = file.replacement ?? source.toBuffer();
+      const table = new OverlayTable(data, 0, data.length, arm9);
+      if (table.entries.length !== source.entries.length) throw new Error("Changing overlay file count is unsupported");
+      for (const entry of table.entries) {
+        const original = source.entries.find((item) => item.overlayId === entry.overlayId);
+        if (original?.fileId !== entry.fileId) throw new Error("Replacement overlay table changes its file references");
+        const payload = this.overlay.files.find((item) => item.id === entry.fileId)!;
+        const size = this.fileBytes(payload).length;
+        if ((entry.reserved >>> 24) & 1 || (!arm9 && entry.reserved > 0))
+          entry.reserved = ((entry.reserved & 0xff000000) | size) >>> 0;
+        if (layout) entry.fileId = layout.sourceIds.get(entry.fileId)!;
+      }
+      add(name, file, table.toBuffer(), (start) => {
+        if (arm9) {
+          h.ARM9overlayOffset = start;
+          h.ARM9overlaySize = data.length;
+        } else {
+          h.ARM7overlayOffset = start;
+          h.ARM7overlaySize = data.length;
+        }
+      });
+      for (const entry of source.entries) addPayload(this.overlay.files.find((file) => file.id === entry.fileId)!);
+    };
+    overlays(true);
+    const arm7 = system("arm7.bin");
+    h.ARM7size = this.fileBytes(arm7).length;
+    add("ARM7", arm7, this.fileBytes(arm7), (start) => {
+      h.ARM7romOffset = start;
+    });
+    overlays(false);
+    const fnt = layout?.fnt ?? this.fileBytes(system("fnt.bin"));
+    h.FNTsize = fnt.length;
+    add("FNT", system("fnt.bin"), fnt, (start) => {
+      h.FNToffset = start;
+    });
+    h.FATsize = fat.length;
+    add("FAT", system("fat.bin"), fat, (start) => {
+      h.FAToffset = start;
+    });
+    const bannerFile = system("banner.bin");
+    const banner = bannerFile.replacement
+      ? new Banner(bannerFile.replacement, 0, bannerFile.replacement.length)
+      : this.banner;
+    const bannerBytes = banner.toBuffer();
+    h.banner_size = bannerBytes.length;
+    add("Banner", bannerFile, bannerBytes, (start) => {
+      h.bannerOffset = start;
+    });
+    for (const file of fileList) addPayload(file);
+    return twl.serialize(h, sections, !!layout);
   }
 }

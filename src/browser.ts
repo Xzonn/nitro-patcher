@@ -31,11 +31,28 @@ export interface BrowserPatchOptions {
   maxUncompressedSize?: number;
   maxEntries?: number;
 }
+export interface DsiCheck {
+  status: "valid" | "invalid" | "not-applicable";
+  reason?: string;
+}
+export interface DsiVerification {
+  arm9: DsiCheck;
+  arm7: DsiCheck;
+  arm9i: DsiCheck;
+  arm7i: DsiCheck;
+  arm9NoSecure: DsiCheck;
+  banner: DsiCheck;
+  sectors: DsiCheck;
+  blocks: DsiCheck;
+  master: DsiCheck;
+  signature: DsiCheck;
+}
 export interface BrowserPatchResult {
   buffer: Uint8Array<ArrayBuffer>;
   returnValue: "SUCCESS" | "MD5_MISMATCH";
   inputMd5: string;
   outputMd5: string;
+  dsi?: DsiVerification;
 }
 export interface RomInfo {
   gameTitle: string;
@@ -43,10 +60,11 @@ export interface RomInfo {
   size: number;
   fileCount: number;
   checksums: { header: boolean; logo: boolean; secureArea: boolean; banner: boolean };
+  dsi?: DsiVerification;
 }
 /** Parse ROM metadata entirely in memory. No filesystem or Node types required. */
-export const inspectRom = (bytes: Uint8Array): RomInfo => {
-  const rom = new NDSFile(bytes);
+export const inspectRom = (bytes: Uint8Array, options: { dsiMode?: "legacy" | "complete" } = {}): RomInfo => {
+  const rom = new NDSFile(bytes, options);
   return {
     gameTitle: rom.header.gameTitle,
     gameCode: rom.header.gameCode,
@@ -58,6 +76,7 @@ export const inspectRom = (bytes: Uint8Array): RomInfo => {
       secureArea: rom.header.secureCRC,
       banner: rom.banner.bannerCRC,
     },
+    ...(options.dsiMode === "complete" && { dsi: rom.verifyDsi() }),
   };
 };
 /** Synchronous CPU work; call in a Web Worker for responsive browser UIs. */
@@ -78,6 +97,7 @@ export const patchBuffer = (
     returnValue: result.returnValue,
     inputMd5: result.inputMd5,
     outputMd5: result.outputMd5,
+    ...(result.dsi && { dsi: result.dsi }),
   };
 };
 /** Read and validate metadata.json from a patch package entirely in memory. */

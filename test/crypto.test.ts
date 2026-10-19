@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 
-import { aes128CtrCrypt, encryptSecureArea, modcryptKey } from "../src/nitro/crypto";
+import { aes128CtrCrypt, decryptSecureArea, encryptSecureArea, modcryptKey } from "../src/nitro/crypto";
 test("DSi AES reverses key, counter and mask (NIST AES block vector)", () => {
   const key = Buffer.from("000102030405060708090a0b0c0d0e0f", "hex").reverse();
   const counter = Buffer.from("00112233445566778899aabbccddeeff", "hex").reverse();
@@ -42,4 +42,8 @@ test("secure-area bytes match pinned ndstool C++ reference", () => {
     createHash("sha256").update(output).digest("hex"),
     "40188fe170aced0e2d2ccc1928b07c3fe42f22f2ec00a7537381248b03444431",
   );
+  const decrypted = decryptSecureArea("ABCD", output);
+  assert.equal(decrypted.readBigUInt64LE(0), 0xe7ffdeffe7ffdeffn);
+  assert.ok(decrypted.subarray(8).every((value) => value === 0x5a));
+  assert.throws(() => decryptSecureArea("EFGH", output), /KEY1/);
 });

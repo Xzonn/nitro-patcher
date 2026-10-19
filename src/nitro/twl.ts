@@ -1,10 +1,13 @@
-import { hashDigest, hmacSha1, readFileSync, verifyRsaSha1 } from "#nitro-runtime";
+import { hmacSha1, readFileSync, verifyRsaSha1 } from "#nitro-runtime";
 
 import type { BinaryWriter } from "./binary";
+import { DEFAULT_MAX_SIZE } from "./binary";
 import type { Arm9Header } from "./blz";
 import { compressArm9, decompressArm9 } from "./blz";
 import type { ModcryptHeader } from "./crypto";
 import { aes128CtrCrypt, encryptSecureArea, modcryptKey } from "./crypto";
+import { Header } from "./header";
+import { CompleteTWL } from "./twl-complete";
 
 export interface TwlHeader extends ModcryptHeader {
   digest_sector_size: number;
@@ -108,9 +111,46 @@ export class TWL {
   readonly Header2Data: Buffer[] | null;
   readonly Overlays9Sha1Hmac: Buffer[];
   readonly twlEncrypted: boolean;
-  DSi9Data: Buffer;
-  DSi7Data: Buffer;
-  constructor(header: TwlHeader, overlays: readonly OverlayRange[], original: Buffer) {
+  readonly complete: CompleteTWL | undefined;
+  private dsi9Data: Buffer = Buffer.alloc(0);
+  private dsi7Data: Buffer = Buffer.alloc(0);
+  get DSi9Data(): Buffer {
+    return this.complete?.DSi9Data ?? this.dsi9Data;
+  }
+  set DSi9Data(data: Buffer) {
+    if (this.complete) this.complete.DSi9Data = data;
+    else this.dsi9Data = data;
+  }
+  get DSi7Data(): Buffer {
+    return this.complete?.DSi7Data ?? this.dsi7Data;
+  }
+  set DSi7Data(data: Buffer) {
+    if (this.complete) this.complete.DSi7Data = data;
+    else this.dsi7Data = data;
+  }
+  constructor(
+    header: TwlHeader,
+    overlays: readonly OverlayRange[],
+    original: Buffer,
+    options: { dsiMode?: "legacy" | "complete"; maxOutputSize?: number } = {},
+  ) {
+    if (options.dsiMode === "complete") {
+      if (!(header instanceof Header)) throw new TypeError("Complete DSi handling requires a parsed Header");
+      this.complete = new CompleteTWL(
+        header,
+        overlays.map((overlay) => slice(original, overlay.offset, overlay.size, "Signed ARM9 overlay")),
+        original,
+        options.maxOutputSize ?? DEFAULT_MAX_SIZE,
+      );
+      this.firstDSiHashOffset = this.complete.firstDSiHashOffset;
+      this.dsiHashSize = this.complete.dsiHashSize;
+      this.Hashtable1Data = this.complete.Hashtable1Data;
+      this.Hashtable2Data = this.complete.Hashtable2Data;
+      this.Header2Data = this.complete.Header2Data;
+      this.Overlays9Sha1Hmac = this.complete.Overlays9Sha1Hmac;
+      this.twlEncrypted = this.complete.twlEncrypted;
+      return;
+    }
     validate(header);
     const h = header;
     this.firstDSiHashOffset = (h.digest_ntr_size / h.digest_sector_size) * 20;
@@ -167,9 +207,11 @@ export class TWL {
     }
   }
   importArm9iData(data: Buffer | string, offset = 0, size?: number): void {
+    if (this.complete) return this.complete.importArm9iData(data, offset, size);
     this.DSi9Data = this.importData(data, offset, size);
   }
   importArm7iData(data: Buffer | string, offset = 0, size?: number): void {
+    if (this.complete) return this.complete.importArm7iData(data, offset, size);
     this.DSi7Data = this.importData(data, offset, size);
   }
   private importData(data: Buffer | string, offset: number, size?: number): Buffer {
@@ -181,6 +223,7 @@ export class TWL {
     return out;
   }
   updateOverlays9Sha1Hmac(arm9Data: Buffer, header: Arm9Header, overlays: readonly Buffer[]): Buffer {
+    if (this.complete) return this.complete.updateOverlays9Sha1Hmac(arm9Data, header, overlays);
     if (overlays.length !== this.Overlays9Sha1Hmac.length)
       throw new Error("Changing ARM9 overlay count is unsupported");
     const hashes = overlays.map(hash);
@@ -203,6 +246,7 @@ export class TWL {
     return unpacked.compressed ? compressArm9(unpacked.data, header, arm9Data.length - hdrptr) : unpacked.data;
   }
   writeTo(writer: BinaryWriter, h: TwlHeader): Buffer {
+    if (this.complete) throw new Error("Complete DSi serialization requires NDSFile.toBuffer()");
     validate(h);
     // Fixed DSi regions cannot be shifted safely without rewriting the header.
     if (writer.position > h.sector_hashtable_start) {
@@ -266,32 +310,22 @@ export class TWL {
   }
 }
 
-/** Refresh the digest and keep valid RSA signatures; optional no$gba hash mask. */
+/** Refresh the master digest while preserving the cartridge signature. */
 export const updateHeaderSignatures = (
   writer: BinaryWriter,
   header: SignedTwlHeader,
   originalHeader: Buffer,
-  keepOriginal: boolean,
+  _keepOriginal = true,
 ): void => {
   const signedData = Buffer.from(slice(originalHeader, 0, 0xe00, "Signed header"));
   const digest = slice(header.hmac_digest_master, 0, 20, "Master digest");
   const signature = slice(header.rsa_signature, 0, 128, "RSA signature");
   digest.copy(signedData, 0x328);
-  const valid = verifyRsaSha1(signedData, signature);
+  verifyRsaSha1(signedData, signature);
   const position = writer.position;
   writer.position = 0x328;
   writer.write(digest);
-  if (!valid) {
-    if (!keepOriginal) {
-      const mask = Buffer.alloc(128, 0xff);
-      mask[0] = 0;
-      mask[1] = 1;
-      mask[107] = 0;
-      hashDigest("sha1", signedData).copy(mask, 108);
-      header.rsa_signature = mask;
-    }
-    writer.position = 0xf80;
-    writer.write(header.rsa_signature);
-  }
+  writer.position = 0xf80;
+  writer.write(signature);
   writer.position = position;
 };

@@ -12,7 +12,10 @@ await build({
   target: "es2022",
   sourcemap: true,
   inject: [resolve("src/browser/buffer.ts")],
-  alias: { "#nitro-runtime": resolve("src/runtime/browser.ts") },
+  alias: {
+    "#nitro-runtime": resolve("src/runtime/browser.ts"),
+    "node-forge": resolve("node_modules/node-forge/dist/forge.min.js"),
+  },
   logLevel: "info",
   legalComments: "linked",
 });
@@ -23,7 +26,15 @@ execFileSync(process.execPath, [resolve("node_modules/typescript/bin/tsc"), "-p"
 await copyFile("artifacts/browser-types/browser.d.ts", "dist/browser.d.ts");
 
 const require = createRequire(import.meta.url);
-for (const dependency of ["@noble/hashes", "@noble/ciphers", "fflate", "buffer", "iconv-lite", "string_decoder"]) {
+for (const dependency of [
+  "@noble/hashes",
+  "@noble/ciphers",
+  "fflate",
+  "buffer",
+  "iconv-lite",
+  "string_decoder",
+  "node-forge",
+]) {
   await appendFile(
     "dist/browser.js.LEGAL.txt",
     `\n\n${dependency}\n${await readFile(resolve("node_modules", dependency, "LICENSE"), "utf8")}`,
