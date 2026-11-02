@@ -263,5 +263,7 @@ export const PatchHelper = Object.freeze({
   readPatchReadme,
   readPatchReadmeFile,
 });
+export { createPatch } from "./patch/create";
+export type { CreatePatchOptions, CreatePatchResult } from "./patch/create";
 export { decodeXdelta } from "./patch/xdelta";
 export type { XdeltaOptions } from "./patch/xdelta";

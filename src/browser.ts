@@ -1,5 +1,6 @@
 import { NDSFile } from "./nitro/nds-file";
 import {
+  createPatch as create,
   extractZipEntry as extractEntry,
   patchBuffer as patch,
   readPatchInfo as readInfo,
@@ -31,6 +32,21 @@ export interface BrowserPatchOptions {
   maxUncompressedSize?: number;
   maxEntries?: number;
 }
+export interface CreatePatchOptions extends BrowserPatchOptions {
+  metadata?: Omit<PatchMetadata, "formatVersion">;
+  readme?: string;
+}
+export interface CreatePatchResult {
+  buffer: Uint8Array<ArrayBuffer>;
+  changedFiles: number;
+  warnings: string[];
+}
+/** Create an in-memory XZP with diagnostic warnings. Call in a Web Worker. */
+export const createPatch = (
+  original: Uint8Array,
+  modified: Uint8Array,
+  options: CreatePatchOptions = {},
+): Promise<CreatePatchResult> => create(original, modified, options);
 export interface DsiCheck {
   status: "valid" | "invalid" | "not-applicable";
   reason?: string;
@@ -117,6 +133,7 @@ export const extractZipEntry = (
 ): Uint8Array<ArrayBuffer> => new Uint8Array(extractEntry(archive, entryName, options));
 
 export const PatchHelper = Object.freeze({
+  createPatch,
   extractZipEntry,
   patchBuffer,
   readPatchInfo,

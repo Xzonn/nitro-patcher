@@ -26,6 +26,10 @@ execFileSync(process.execPath, [resolve("node_modules/typescript/bin/tsc"), "-p"
 await copyFile("artifacts/browser-types/browser.d.ts", "dist/browser.d.ts");
 
 const require = createRequire(import.meta.url);
+await appendFile(
+  "dist/browser.js.LEGAL.txt",
+  `\n\n@limrun/xdelta3-wasm\n${await readFile("src/patch/xdelta3-LICENSE", "utf8")}`,
+);
 for (const dependency of [
   "@noble/hashes",
   "@noble/ciphers",
