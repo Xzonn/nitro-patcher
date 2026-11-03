@@ -1,4 +1,4 @@
-import { encode } from "@limrun/xdelta3-wasm";
+import { init, xd3_encode_memory, xd3_smatch_cfg } from "@xzonn/xdelta3-wasm";
 import { zipSync } from "fflate";
 
 import { hashDigest } from "#nitro-runtime";
@@ -124,20 +124,12 @@ const parseRom = (input: Buffer, label: string, warnings: string[]): NDSFile => 
 };
 
 const createDelta = async (before: Buffer, after: Buffer): Promise<Buffer> => {
-  const chunks: Buffer[] = [];
-  async function* targetChunks() {
-    yield after;
-  }
-  for await (const chunk of encode(targetChunks(), {
-    size: before.length,
-    read(offset, into) {
-      const part = before.subarray(offset, offset + into.length);
-      into.set(part);
-      return part.length;
-    },
-  }))
-    chunks.push(Buffer.from(chunk));
-  return Buffer.concat(chunks);
+  await init();
+  const windowSize = 64 * 1024;
+  const maxSize = after.length * 2 + Math.ceil(after.length / windowSize) * 64 + 1024;
+  const result = xd3_encode_memory(after, before, maxSize, xd3_smatch_cfg.DEFAULT, windowSize);
+  if (result.ret !== 0) throw new Error(`Cannot encode VCDIFF: ${result.str}`);
+  return Buffer.from(result.output);
 };
 
 const verifyContent = (actual: NDSFile, expected: NDSFile, arm9: Buffer, warnings: string[]): void => {

@@ -5,6 +5,7 @@ allowBuilds:
 overrides:
   "tsup>esbuild": "0.28.1"
 
-# Keep the already pinned Node types while this release is within pnpm's age window.
+# Allow these pinned versions while they are within pnpm's age window.
 minimumReleaseAgeExclude:
   - "@types/node@22.20.2"
+  - "@xzonn/xdelta3-wasm@1.1.2"

@@ -11,9 +11,9 @@ importers:
 
   .:
     dependencies:
-      '@limrun/xdelta3-wasm':
-        specifier: 0.2.0
-        version: 0.2.0
+      '@xzonn/xdelta3-wasm':
+        specifier: 1.1.2
+        version: 1.1.2
       fflate:
         specifier: 0.8.3
         version: 0.8.3
@@ -332,9 +332,6 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
-
-  '@limrun/xdelta3-wasm@0.2.0':
-    resolution: {integrity: sha512-mEohO7CYj4Gdc0v1Gr/AjlBhfbXQnIz6+2wmMhRfwz8hXZrsIC/yqYQhfoDhu1ysqQwBnU5lDDLPUGdUu+8hPQ==}
 
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     resolution: {integrity: sha512-oTXEIha4SsuXdTA4Iyskj0kpdx2yVXdhd75c2v3xGrHFfVMsbhTPZU/nMPL4sWKo4pBHm3aucLaqGlF696dTyQ==}
@@ -696,6 +693,10 @@ packages:
     resolution: {integrity: sha512-nAB74NfSNKknqQ1RrYj6uz8FcXEomu/MATJZxh/x+BArzN2U3JbOYC0APYzUIGhVY3m5hRxA8VPNdPBoG8txlA==}
     cpu: [x64]
     os: [win32]
+
+  '@xzonn/xdelta3-wasm@1.1.2':
+    resolution: {integrity: sha512-SffULYF5o/8rPgTLkyiUKoXSyOyrStfDb/jsW4JwuX3pueIIYqgxFKjCiH7iY5sqzTlYC9lJNohqCH8CMycWdw==}
+    engines: {node: '>=12'}
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -1484,8 +1485,6 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@limrun/xdelta3-wasm@0.2.0': {}
-
   '@napi-rs/lzma-linux-x64-gnu@1.5.1':
     optional: true
 
@@ -1756,6 +1755,8 @@ snapshots:
 
   '@unrs/resolver-binding-win32-x64-msvc@1.12.2':
     optional: true
+
+  '@xzonn/xdelta3-wasm@1.1.2': {}
 
   acorn-jsx@5.3.2(acorn@8.18.0):
     dependencies:

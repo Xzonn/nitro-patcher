@@ -93,7 +93,7 @@
     "#browser-aes": "@noble/ciphers/aes.js"
   },
   "dependencies": {
-    "@limrun/xdelta3-wasm": "0.2.0",
+    "@xzonn/xdelta3-wasm": "1.1.2",
     "fflate": "0.8.3",
     "iconv-lite": "0.7.3",
     "markdansi": "0.3.3",
