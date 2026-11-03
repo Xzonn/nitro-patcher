@@ -22,6 +22,7 @@ const compiled = await transform(source, {
   target: "es2022",
 });
 const api = runInNewContext(`${compiled.code}\nNitroBrowser`, {
+  atob,
   TextDecoder,
   TextEncoder,
   Uint8Array,
