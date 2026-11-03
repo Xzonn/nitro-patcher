@@ -62,26 +62,15 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6.0.9
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
+          registry-url: https://registry.npmjs.org/
           package-manager-cache: false
+      - run: npm install --global npm@11
       - uses: actions/download-artifact@v8
         with:
           name: npm-release
           path: artifacts
       - name: Publish the checked tarball to public latest
-        # Prefer OIDC: configure this repository + publish.yml as the package's
-        # trusted publisher on npmjs.com. NPM_TOKEN is an optional bootstrap
-        # fallback when the package does not yet have a trusted publisher.
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_USERCONFIG: ${{ runner.temp }}/npm-publish.npmrc
-        run: |
-          if [ -n "$NODE_AUTH_TOKEN" ]; then
-            printf '%s\n' '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' > "$NPM_CONFIG_USERCONFIG"
-          else
-            : > "$NPM_CONFIG_USERCONFIG"
-          fi
-          pnpm publish artifacts/*.tgz --no-git-checks --ignore-scripts --access public --tag latest --provenance --registry https://registry.npmjs.org/
+        run: npm publish ./artifacts/*.tgz --ignore-scripts --access public --tag latest --provenance --registry https://registry.npmjs.org/
