@@ -10,14 +10,16 @@
 
 ```sh
 pnpm add nitro-patcher
-npx nitro-patcher original.nds patch.zip patched.nds
+npx nitro-patcher --input original.nds --patch patch.xzp --output patched.nds
 ```
 
 也可以直接运行：
 
 ```sh
-npx nitro-patcher --json original.nds patch.zip patched.nds
+npx nitro-patcher --json --input original.nds --patch patch.xzp --output patched.nds
 ```
+
+完整说明见 [Wiki](https://github.com/Xzonn/nitro-patcher/wiki)。
 
 ## License
 
