@@ -289,9 +289,15 @@ export const createPatch = async (
     if (sourceFiles.has(path) && before.equals(after)) continue;
     if (!sourceFiles.has(path) && !/^(data|overlay)\//.test(path) && !/^overarm[97]\.bin$/.test(path))
       warnings.push(`新增系统文件：${file.path}`);
+    changedFiles++;
+    if (!sourceFiles.has(path) || after.length < 128 * 1024) {
+      entries[file.path] = after;
+      continue;
+    }
     try {
       const delta = await createDelta(before, after);
-      if (decodeXdelta(before, delta, options).equals(after)) entries[`xdelta/${file.path}`] = delta;
+      if (delta.length > after.length * 0.8) entries[file.path] = after;
+      else if (decodeXdelta(before, delta, options).equals(after)) entries[`xdelta/${file.path}`] = delta;
       else {
         warnings.push(`文件差分解码内容不同，已保存完整替换内容：${file.path}`);
         entries[file.path] = after;
@@ -300,7 +306,6 @@ export const createPatch = async (
       warnings.push(`文件差分检查未完成，已保存完整替换内容：${file.path}：${errorMessage(reason)}`);
       entries[file.path] = after;
     }
-    changedFiles++;
   }
   const metadata: PatchMetadata = { ...options.metadata, formatVersion: 2 };
   const inputMd5 = hashDigest("md5", input).toString("hex");
