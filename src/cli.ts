@@ -5,22 +5,24 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
 import { NDSFile } from "./nitro/nds-file";
-import { type PatchMetadata, patchBuffer, readPatchInfo } from "./nitro-patch-helper";
+import { type PatchMetadata, createPatch, patchBuffer, readPatchInfo } from "./nitro-patch-helper";
 
 const help = `nitro-patcher — NDS ROM 补丁工具
 
 用法：
   nitro-patcher [--json] [--dry-run] <原始ROM> <补丁ZIP> [输出ROM]
   nitro-patcher patch [--json] [--dry-run] --input <原始ROM> --patch <补丁ZIP> [--output <输出ROM>]
+  nitro-patcher create [--json] [--dry-run] --input <原始ROM> --modified <修改后ROM> [--output <输出XZP>]
   nitro-patcher extract [--json] --input <ROM> --output <目录>
   nitro-patcher inspect [--json] --input <ROM>
 
   --json         结果输出为 JSON 格式
-  --dry-run      完整执行补丁流程，但不写入输出 ROM
+  --dry-run      完整执行补丁流程，但不写入输出文件
   --dsi-mode     extract/inspect 的 DSi 处理模式：legacy 或 complete
   -i, --input    输入 ROM 路径
   -p, --patch    补丁 ZIP 路径
-  -o, --output   输出 ROM 或提取目录；试运行时可省略
+  -m, --modified 修改后的 ROM 路径
+  -o, --output   输出 ROM、补丁 XZP 或提取目录；试运行时可省略
   -h, --help     显示帮助
   -v, --version  显示版本`;
 
@@ -29,6 +31,7 @@ interface CommandOptions {
   dryRun: boolean;
   input: string | undefined;
   patch: string | undefined;
+  modified: string | undefined;
   output: string | undefined;
   dsiMode: "legacy" | "complete" | undefined;
 }
@@ -153,6 +156,7 @@ const main = async (): Promise<void> => {
       "dsi-mode": { type: "string" },
       input: { type: "string", short: "i" },
       patch: { type: "string", short: "p" },
+      modified: { type: "string", short: "m" },
       output: { type: "string", short: "o" },
     },
   });
@@ -175,13 +179,22 @@ const main = async (): Promise<void> => {
     dryRun: values["dry-run"] ?? false,
     input: values.input,
     patch: values.patch,
+    modified: values.modified,
     output: values.output,
     dsiMode,
   };
   const command = positionals.length === 1 ? positionals[0] : undefined;
   if (positionals.length !== 0 && positionals.length !== 1 && positionals.length !== 3) throw new Error(help);
-  if (command !== undefined && command !== "patch" && command !== "extract" && command !== "inspect")
+  if (
+    command !== undefined &&
+    command !== "patch" &&
+    command !== "create" &&
+    command !== "extract" &&
+    command !== "inspect"
+  )
     throw new Error(help);
+  const creating = command === "create";
+  if (!creating && options.modified !== undefined) throw new Error(help);
   if (command === "extract") {
     await extractRom(options);
     return;
@@ -192,32 +205,57 @@ const main = async (): Promise<void> => {
   }
 
   const dryRun = options.dryRun;
-  if (options.dsiMode !== undefined) throw new Error("patch selects DSi processing from metadata.json formatVersion");
+  if (options.dsiMode !== undefined)
+    throw new Error(
+      creating
+        ? "create selects DSi processing from the input ROMs"
+        : "patch selects DSi processing from metadata.json formatVersion",
+    );
+  if (creating && (!options.modified || options.patch !== undefined)) throw new Error(help);
   const usesLegacyPaths = positionals.length === 3;
   if (usesLegacyPaths && (values.input !== undefined || values.patch !== undefined || values.output !== undefined))
     throw new Error(help);
-  if (!usesLegacyPaths && (!values.input || !values.patch || (!dryRun && !values.output))) throw new Error(help);
-  const [original, patch, output] = usesLegacyPaths ? positionals : [values.input, values.patch, values.output];
-  if (!original || !patch) throw new Error(help);
+  if (
+    !usesLegacyPaths &&
+    (!values.input || !(creating ? values.modified : values.patch) || (!dryRun && !values.output))
+  )
+    throw new Error(help);
+  const [original, secondInput, output] = usesLegacyPaths
+    ? positionals
+    : [values.input, creating ? values.modified : values.patch, values.output];
+  if (!original || !secondInput) throw new Error(help);
   if (!dryRun) {
     if (!output) throw new Error(help);
-    if ((await sameFile(original, output)) || (await sameFile(patch, output)))
-      throw new Error("输出路径不能覆盖原始 ROM 或补丁包。");
+    if ((await sameFile(original, output)) || (await sameFile(secondInput, output)))
+      throw new Error(creating ? "输出路径不能覆盖原始 ROM 或修改后的 ROM。" : "输出路径不能覆盖原始 ROM 或补丁包。");
   }
-  const [originalBytes, patchBytes] = await Promise.all([readFile(original), readFile(patch)]);
-  const info = readPatchInfo(patchBytes);
-  const result = patchBuffer(originalBytes, patchBytes);
+  const [originalBytes, secondInputBytes] = await Promise.all([readFile(original), readFile(secondInput)]);
+  const info = creating ? undefined : readPatchInfo(secondInputBytes);
+  const result = creating
+    ? await createPatch(originalBytes, secondInputBytes)
+    : patchBuffer(originalBytes, secondInputBytes);
   if (!dryRun) {
     if (!output) throw new Error(help);
     const destination = join(await realpath(dirname(resolve(output))), basename(output));
     const temporary = await mkdtemp(join(dirname(destination), ".nitro-patcher-"));
     try {
-      const file = join(temporary, "output.nds");
+      const file = join(temporary, creating ? "patch.xzp" : "output.nds");
       await writeFile(file, result.buffer);
       await rename(file, destination);
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }
+  }
+  if ("changedFiles" in result) {
+    const { changedFiles, warnings } = result;
+    if (options.json) {
+      console.log(JSON.stringify({ changedFiles, warnings, ...(dryRun && { dryRun: true }) }));
+    } else {
+      if (dryRun) console.log("试运行完成，未写入输出补丁。");
+      console.log(`已创建补丁，包含 ${changedFiles} 项文件修改。`);
+      for (const warning of warnings) console.warn(`警告：${safeTerminalText(warning)}`);
+    }
+    return;
   }
   const { returnValue, inputMd5, outputMd5 } = result;
   if (options.json) {
@@ -235,11 +273,11 @@ const main = async (): Promise<void> => {
   }
 
   const sections: string[] = [];
-  if (info.metadata) {
+  if (info?.metadata) {
     const metadata = formatMetadata(info.metadata);
     if (metadata) sections.push(`补丁信息：\n\n${metadata}`);
   }
-  if (info.readme) {
+  if (info?.readme) {
     const content = safeTerminalText(info.readme.content);
     const rendered =
       info.readme.format === "markdown"
